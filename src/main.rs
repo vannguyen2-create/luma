@@ -1,5 +1,6 @@
 
 
+
 /// Debug log to /tmp/luma.log — enabled by LUMA_DEBUG=1.
 #[macro_export]
 macro_rules! dbg_log {
@@ -30,7 +31,7 @@ mod tui;
 
 use std::process::Command;
 
-#[tokio::main(flavor = "current_thread")]
+#[tokio::main]
 async fn main() {
     let args: Vec<String> = std::env::args().collect();
     let cmd = args.get(1).map(|s| s.as_str());

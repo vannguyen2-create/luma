@@ -1,4 +1,12 @@
 /// OutputLog facade — public API for the app to push content and query visible lines.
+///
+/// Two-phase architecture:
+/// - **Event phase**: mutate state + mark dirty. NEVER call ensure_fresh.
+/// - **Render phase**: `prepare_frame()` calls ensure_fresh ONCE, then auto_scroll + clamp.
+///
+/// All scroll/query methods use `cached_total` (updated by prepare_frame).
+/// This avoids O(n²) re-renders when pushing many blocks (session load)
+/// and eliminates ensure_fresh from scroll event handlers.
 use crate::tui::block::{render_block, Block, SkillBlock, TextBlock, ToolBlock};
 use crate::tui::stream::StreamBuf;
 use crate::tui::scroll::ScrollView;
@@ -17,6 +25,10 @@ pub struct OutputLog {
     height: usize,
     spinner_frame: usize,
     has_logo: bool,
+    /// Total rendered lines from last prepare_frame(). Used by scroll methods
+    /// so they never need ensure_fresh. Stale by at most 1 frame — invisible
+    /// to the user since render hasn't happened yet.
+    cached_total: usize,
 }
 
 impl OutputLog {
@@ -30,10 +42,41 @@ impl OutputLog {
             height,
             spinner_frame: 0,
             has_logo: false,
+            cached_total: 0,
         }
     }
 
-    /// Advance spinner and re-render active tool block.
+    // ════════════════════════════════════════════════════════════════
+    // RENDER PHASE — called once per frame from App::render()
+    // ════════════════════════════════════════════════════════════════
+
+    /// Reconcile all state for this frame. Must be called exactly once
+    /// at the start of each render, before any visible_lines/scroll_info.
+    pub fn prepare_frame(&mut self) {
+        self.cache
+            .refresh(&mut self.blocks, self.width, self.spinner_frame);
+        self.cached_total = self.cache.total_lines();
+        self.scroll.auto_scroll(self.cached_total, self.height);
+        self.scroll.clamp(self.cached_total, self.height);
+    }
+
+    /// Get the visible lines for the current scroll position.
+    /// prepare_frame() must have been called this frame.
+    pub fn visible_lines(&mut self) -> &[Line] {
+        self.cache.visible(self.scroll.offset, self.height)
+    }
+
+    /// Zero-copy iterator over visible lines — for direct Renderer painting.
+    /// prepare_frame() must have been called this frame.
+    pub fn visible_iter(&mut self) -> crate::tui::viewport::ViewportIter<'_> {
+        self.cache.window_iter(self.scroll.offset, self.height)
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    // EVENT PHASE — cheap state mutation only, never ensure_fresh
+    // ════════════════════════════════════════════════════════════════
+
+    /// Advance spinner, mark active tool block dirty.
     pub fn tick(&mut self) {
         self.spinner_frame = (self.spinner_frame + 1) % icon::SPINNER.len();
         if let Some(Block::Tool(tb)) = self.blocks.last()
@@ -55,12 +98,10 @@ impl OutputLog {
     /// Add a user message block. Always 1 gap before + 1 gap after.
     pub fn user_message(&mut self, text: &str) {
         self.commit_last();
-        // Clear splash logo on first interaction
         if self.has_logo {
             self.clear();
             self.has_logo = false;
         }
-        // Ensure exactly 1 gap before user block
         if !matches!(self.blocks.last(), Some(Block::Gap)) {
             self.push(Block::Gap);
         }
@@ -86,7 +127,6 @@ impl OutputLog {
             return;
         }
         self.commit_last();
-        // Gap before text when preceded by tool/skill (visual separation)
         if matches!(self.blocks.last(), Some(Block::Tool(_) | Block::Skill(_))) {
             self.push(Block::Gap);
         }
@@ -178,13 +218,11 @@ impl OutputLog {
 
     /// Start a tool invocation block (or update summary if already active).
     pub fn tool_start(&mut self, name: &str, summary: &str) {
-        // If block already exists (e.g. early ToolStart from SSE), just update summary
         if let Some((idx, Block::Tool(tb))) = self.blocks.iter_mut().enumerate().rev().find(|(_, b)| {
             matches!(b, Block::Tool(tb) if tb.name == name && !tb.is_done)
         }) {
             if !summary.is_empty() {
                 tb.summary = summary.to_owned();
-                // Clear input preview — real tool output will follow
                 tb.stream = Some(StreamBuf::new());
                 self.cache.mark_dirty(idx);
             }
@@ -205,15 +243,13 @@ impl OutputLog {
         }));
     }
 
-    /// Append streaming tool input preview (content being written/edited).
+    /// Append streaming tool input preview.
     pub fn tool_input(&mut self, name: &str, chunk: &str) {
-        // Create block if not yet started
         if !self.blocks.iter().rev().any(|b| {
             matches!(b, Block::Tool(tb) if tb.name == name && !tb.is_done)
         }) {
             self.tool_start(name, "");
         }
-        // Feed to stream for live preview
         let found = self.blocks.iter().enumerate().rev().find_map(|(i, b)| {
             if let Block::Tool(tb) = b
                 && tb.name == name
@@ -231,11 +267,10 @@ impl OutputLog {
                 stream.feed(chunk);
             }
             self.cache.mark_dirty(idx);
-            self.auto_scroll();
         }
     }
 
-    /// Append streaming tool output (finds matching active tool by name).
+    /// Append streaming tool output.
     pub fn tool_output(&mut self, name: &str, chunk: &str) {
         let found = self.blocks.iter().enumerate().rev().find_map(|(i, b)| {
             if let Block::Tool(tb) = b
@@ -256,11 +291,10 @@ impl OutputLog {
                 }
             }
             self.cache.mark_dirty(idx);
-            self.auto_scroll();
         }
     }
 
-    /// Finish a tool invocation (searches backwards for matching name).
+    /// Finish a tool invocation.
     pub fn tool_end(&mut self, name: &str, summary: &str) {
         self.commit_last();
         let found = self.blocks.iter().enumerate().rev().find_map(|(i, b)| {
@@ -280,7 +314,7 @@ impl OutputLog {
             tb.end_summary = summary.to_owned();
             tb.stream = None;
             self.cache.mark_dirty(idx);
-            self.clamp_scroll();
+            // clamp deferred to prepare_frame
         }
     }
 
@@ -311,7 +345,7 @@ impl OutputLog {
         }
     }
 
-    /// Finalize any in-progress blocks (tool spinner, thinking, text stream).
+    /// Finalize any in-progress blocks.
     pub fn abort(&mut self) {
         self.commit_last();
         let idx = self.blocks.len().wrapping_sub(1);
@@ -327,7 +361,7 @@ impl OutputLog {
             }
             _ => {}
         }
-        self.clamp_scroll();
+        // clamp deferred to prepare_frame
     }
 
     /// Flush partial streaming data.
@@ -340,38 +374,38 @@ impl OutputLog {
         self.blocks.clear();
         self.scroll.reset();
         self.cache.clear();
+        self.cached_total = 0;
     }
 
-    // ── Scroll ──
+    // ── Scroll (event phase — uses cached_total) ──
 
-    /// Scroll up by n lines.
+    /// Scroll up by n lines. Bounce-tolerant for trackpad inertia.
     pub fn scroll_up(&mut self, n: usize) {
-        self.scroll.up(n);
+        let max = self.cached_total.saturating_sub(self.height);
+        self.scroll.up(n, max, 3);
     }
 
     /// Scroll down by n lines.
     pub fn scroll_down(&mut self, n: usize) {
-        let max = self.max_scroll();
+        let max = self.cached_total.saturating_sub(self.height);
         self.scroll.down(n, max);
     }
 
     /// Jump to a scroll offset (for scrollbar drag).
     pub fn scroll_to(&mut self, offset: usize) {
-        let max = self.max_scroll();
+        let max = self.cached_total.saturating_sub(self.height);
         self.scroll.set_offset(offset, max);
     }
 
     /// Total lines, visible height, and current scroll offset.
-    pub fn scroll_info(&mut self) -> (usize, usize, usize) {
-        self.ensure_fresh();
-        (self.cache.total_lines(), self.height, self.scroll.offset)
+    pub fn scroll_info(&self) -> (usize, usize, usize) {
+        (self.cached_total, self.height, self.scroll.offset)
     }
 
-    // ── Hit testing ──
+    // ── Hit testing (event phase — uses cached offsets) ──
 
     /// Find which block index is at a screen row.
-    pub fn hit_test_block(&mut self, screen_row: usize, region_row: usize) -> Option<usize> {
-        self.ensure_fresh();
+    pub fn hit_test_block(&self, screen_row: usize, region_row: usize) -> Option<usize> {
         let abs = self.scroll.offset + screen_row.saturating_sub(region_row);
         self.cache.hit_test(abs)
     }
@@ -384,7 +418,7 @@ impl OutputLog {
             }
             tb.is_expanded = !tb.is_expanded;
             self.cache.mark_dirty(block_idx);
-            self.clamp_scroll();
+            // clamp deferred to prepare_frame
             return true;
         }
         false
@@ -392,33 +426,22 @@ impl OutputLog {
 
     /// Get text at a screen row (for copy selection).
     #[allow(dead_code)]
-    pub fn text_at_row(&mut self, screen_row: usize, region_row: usize) -> String {
-        self.ensure_fresh();
+    pub fn text_at_row(&self, screen_row: usize, region_row: usize) -> String {
         let abs = self.scroll.offset + screen_row.saturating_sub(region_row);
         self.cache.text_at(abs)
     }
 
-    // ── Render ──
-
-    /// Get the visible lines for the current scroll position (clones into window buf).
-    pub fn visible_lines(&mut self) -> &[Line] {
-        self.ensure_fresh();
-        self.cache.visible(self.scroll.offset, self.height)
-    }
-
-    /// Zero-copy iterator over visible lines — for direct Renderer painting.
-    pub fn visible_iter(&mut self) -> crate::tui::viewport::ViewportIter<'_> {
-        self.ensure_fresh();
-        self.cache.window_iter(self.scroll.offset, self.height)
-    }
-
-    // ── Private ──
+    // ════════════════════════════════════════════════════════════════
+    // PRIVATE — internal helpers
+    // ════════════════════════════════════════════════════════════════
 
     fn push(&mut self, block: Block) {
         let rendered = render_block(&block, self.width, self.spinner_frame);
         self.blocks.push(block);
         self.cache.push(rendered);
-        self.auto_scroll();
+        // No auto_scroll / ensure_fresh here.
+        // prepare_frame() handles scroll reconciliation once per frame.
+        // This keeps batch pushes (session load) O(n) instead of O(n²).
     }
 
     fn feed_last(&mut self, token: &str) {
@@ -429,7 +452,6 @@ impl OutputLog {
             _ => return,
         }
         self.cache.mark_dirty(idx);
-        self.auto_scroll();
     }
 
     fn commit_last(&mut self) {
@@ -458,28 +480,6 @@ impl OutputLog {
             _ => {}
         }
     }
-
-    fn ensure_fresh(&mut self) {
-        self.cache
-            .refresh(&mut self.blocks, self.width, self.spinner_frame);
-    }
-
-    fn auto_scroll(&mut self) {
-        self.ensure_fresh();
-        let total = self.cache.total_lines();
-        self.scroll.auto_scroll(total, self.height);
-    }
-
-    fn clamp_scroll(&mut self) {
-        self.ensure_fresh();
-        let total = self.cache.total_lines();
-        self.scroll.clamp(total, self.height);
-    }
-
-    fn max_scroll(&mut self) -> usize {
-        self.ensure_fresh();
-        self.cache.total_lines().saturating_sub(self.height)
-    }
 }
 
 /// Strip ANSI escape sequences (CSI and OSC) from a string.
@@ -506,7 +506,6 @@ fn strip_ansi(s: &str) -> String {
                 i += 2;
             }
         } else {
-            // Copy one UTF-8 character
             let start = i;
             i += 1;
             while i < b.len() && b[i] & 0xC0 == 0x80 { i += 1; }
@@ -520,11 +519,15 @@ fn strip_ansi(s: &str) -> String {
 mod tests {
     use super::*;
 
+    /// Helper: prepare_frame before any query in tests.
+    fn pf(log: &mut OutputLog) { log.prepare_frame(); }
+
     #[test]
     fn basic_content() {
         let mut log = OutputLog::new(80, 10);
         log.info("hello");
         log.divider();
+        pf(&mut log);
         let (total, _, _) = log.scroll_info();
         assert!(total >= 2);
     }
@@ -538,9 +541,8 @@ mod tests {
         }
         log.tool_end("bash", "");
 
+        pf(&mut log);
         let (before, _, _) = log.scroll_info();
-        let _idx = log.hit_test_block(1, 1).unwrap_or(0);
-        // Find the tool block
         let mut tool_idx = None;
         for i in 0..log.blocks.len() {
             if matches!(&log.blocks[i], Block::Tool(_)) {
@@ -550,10 +552,12 @@ mod tests {
         }
         let ti = tool_idx.unwrap();
         assert!(log.toggle_expand(ti));
+        pf(&mut log);
         let (after, _, _) = log.scroll_info();
         assert!(after > before);
 
-        assert!(log.toggle_expand(ti)); // collapse
+        assert!(log.toggle_expand(ti));
+        pf(&mut log);
         let (collapsed, _, _) = log.scroll_info();
         assert_eq!(collapsed, before);
     }
@@ -564,9 +568,11 @@ mod tests {
         for i in 0..20 {
             log.info(&format!("line {i}"));
         }
+        pf(&mut log);
         log.scroll_up(5);
         let (_, _, offset_before) = log.scroll_info();
         log.info("new content");
+        pf(&mut log);
         let (_, _, offset_after) = log.scroll_info();
         assert_eq!(offset_before, offset_after);
     }
@@ -577,10 +583,11 @@ mod tests {
         for i in 0..20 {
             log.info(&format!("line {i}"));
         }
+        pf(&mut log);
         log.scroll_up(5);
         log.scroll_down(999);
         log.info("new");
-        // Should have auto-scrolled to show "new"
+        pf(&mut log);
         let vis = log.visible_lines();
         assert!(!vis.is_empty());
     }
@@ -592,6 +599,7 @@ mod tests {
         log.append_token("world\n");
         log.append_token("line2");
         log.newline();
+        pf(&mut log);
         let (total, _, _) = log.scroll_info();
         assert!(total > 0);
     }
@@ -600,6 +608,7 @@ mod tests {
     fn streaming_visible_content() {
         let mut log = OutputLog::new(80, 20);
         log.append_token("hello ");
+        pf(&mut log);
         let vis = log.visible_lines().to_vec();
         let text: String = vis.iter()
             .flat_map(|l| l.spans.iter().map(|s| s.text.as_str()))
@@ -607,6 +616,7 @@ mod tests {
         assert!(text.contains("hello"), "expected 'hello' in visible, got: {text:?}");
 
         log.append_token("world\n");
+        pf(&mut log);
         let vis = log.visible_lines().to_vec();
         let text: String = vis.iter()
             .flat_map(|l| l.spans.iter().map(|s| s.text.as_str()))
@@ -615,6 +625,7 @@ mod tests {
 
         log.append_token("line2");
         log.newline();
+        pf(&mut log);
         let vis = log.visible_lines().to_vec();
         let text: String = vis.iter()
             .flat_map(|l| l.spans.iter().map(|s| s.text.as_str()))
@@ -630,13 +641,13 @@ mod tests {
         log.divider();
 
         log.user_message("hello");
-        // Streaming response
         log.append_token("Hi ");
         log.append_token("there!\n");
         log.append_token("How can I help?");
         log.newline();
         log.divider_with_label("1.0s");
 
+        pf(&mut log);
         let vis = log.visible_lines().to_vec();
         let dump: Vec<String> = vis.iter().map(|l| {
             l.spans.iter().map(|s| s.text.as_str()).collect::<String>()
@@ -662,7 +673,7 @@ mod tests {
         log.newline();
         log.divider_with_label("1.0s");
 
-        // Test via iterator path (what renderer uses)
+        pf(&mut log);
         let texts: Vec<String> = log.visible_iter().map(|l| {
             l.spans.iter().map(|s| s.text.as_str()).collect::<String>()
         }).collect();
@@ -676,6 +687,7 @@ mod tests {
     fn assistant_message_via_iter() {
         let mut log = OutputLog::new(80, 20);
         log.assistant_message("Dự án này rất hay!\n\nĐiểm nổi bật:\n- Fast\n- Clean");
+        pf(&mut log);
         let texts: Vec<String> = log.visible_iter().map(|l| {
             l.spans.iter().map(|s| s.text.as_str()).collect::<String>()
         }).collect();
@@ -689,11 +701,11 @@ mod tests {
         let mut log = OutputLog::new(80, 10);
         log.append_thinking("hmm");
         log.append_token("done");
+        pf(&mut log);
         let (total, _, _) = log.scroll_info();
         assert!(total > 0);
     }
 
-    /// Thinking → text spacing: exactly 1 empty line between, no more.
     #[test]
     fn thinking_spacing() {
         let mut log = OutputLog::new(80, 40);
@@ -705,6 +717,7 @@ mod tests {
         log.newline();
         log.divider_with_label("1.0s");
 
+        pf(&mut log);
         let vis = log.visible_lines().to_vec();
         let dump: Vec<String> = vis.iter().enumerate().map(|(i, l)| {
             let w = l.visible_width();
@@ -712,7 +725,6 @@ mod tests {
             format!("{i:2}: [w={w:2}] {t}")
         }).collect();
 
-        // Check no triple consecutive empty lines
         let mut consec = 0;
         for (i, l) in vis.iter().enumerate() {
             if l.visible_width() == 0 {
@@ -724,34 +736,29 @@ mod tests {
             }
         }
 
-        // Verify thinking and answer are both present
         let all: String = dump.join("\n");
         assert!(all.contains("Thinking:"), "missing thinking:\n{all}");
         assert!(all.contains("Here is my answer"), "missing answer:\n{all}");
     }
 
-    /// Thinking wrap: line 2+ should NOT have cont_pad indent.
     #[test]
     fn thinking_wrap_no_extra_indent() {
         let mut log = OutputLog::new(30, 40);
-        // First line gets "Thinking: " prefix (10 chars) + 30 chars text = wraps
-        // Second committed line has no prefix — wrap should NOT add "  " pad
         log.append_thinking("short first line\n");
-        log.append_thinking(&"x".repeat(50)); // 50 chars, wraps at width 30
+        log.append_thinking(&"x".repeat(50));
         log.newline();
 
+        pf(&mut log);
         let vis = log.visible_lines().to_vec();
         let dump: Vec<String> = vis.iter().enumerate().map(|(i, l)| {
             let t: String = l.spans.iter().map(|s| s.text.as_str()).collect();
             format!("{i:2}: [{:2}] |{t}|", l.visible_width())
         }).collect();
 
-        // Find wrapped continuation of the "xxx..." line
-        // It should start with "x", not "  x"
         let long_lines: Vec<&str> = vis.iter()
             .map(|l| l.spans.iter().map(|s| s.text.as_str()).collect::<String>())
             .collect::<Vec<_>>()
-            .leak() // test only
+            .leak()
             .iter()
             .map(|s| s.as_str())
             .filter(|t| t.starts_with("xx"))
@@ -761,7 +768,6 @@ mod tests {
         }
     }
 
-    /// Thinking with blank lines — no excessive spacing.
     #[test]
     fn thinking_blank_lines_no_excess() {
         let mut log = OutputLog::new(80, 40);
@@ -769,6 +775,7 @@ mod tests {
         log.append_token("answer");
         log.newline();
 
+        pf(&mut log);
         let vis = log.visible_lines().to_vec();
         let mut consec = 0;
         for (i, l) in vis.iter().enumerate() {
@@ -792,6 +799,7 @@ mod tests {
         let mut log = OutputLog::new(80, 10);
         log.info("hello");
         log.clear();
+        pf(&mut log);
         let (total, _, _) = log.scroll_info();
         assert_eq!(total, 0);
     }
@@ -800,6 +808,7 @@ mod tests {
     fn assistant_message_renders() {
         let mut log = OutputLog::new(80, 10);
         log.assistant_message("hello\nworld");
+        pf(&mut log);
         let (total, _, _) = log.scroll_info();
         assert!(total >= 2);
     }
@@ -808,31 +817,29 @@ mod tests {
     fn tool_history_renders_collapsed() {
         let mut log = OutputLog::new(80, 10);
         log.tool_history("bash", "$ ls");
+        pf(&mut log);
         let (total, _, _) = log.scroll_info();
         assert!(total >= 1);
-        // Should be done and not expandable (no output)
         assert!(!log.toggle_expand(0));
     }
 
-    /// No consecutive empty lines in full streaming + tools flow.
     #[test]
     fn no_triple_empty_lines_in_markdown() {
         let mut log = OutputLog::new(80, 500);
         log.assistant_message("# Title\n\nParagraph one.\n\n## Section\n\n1. **Item one** — detail\n   - sub-item\n\n2. **Item two** — detail\n\n### Sub-section\n\nFinal paragraph.");
+        pf(&mut log);
         let vis = log.visible_lines().to_vec();
         let mut consec = 0;
         for (i, l) in vis.iter().enumerate() {
             if l.visible_width() == 0 {
                 consec += 1;
-                assert!(consec < 3,
-                    "3+ consecutive empty at line {i}");
+                assert!(consec < 3, "3+ consecutive empty at line {i}");
             } else {
                 consec = 0;
             }
         }
     }
 
-    /// No consecutive empty lines in full streaming + tools flow.
     #[test]
     fn no_consecutive_empty_lines_streaming() {
         let mut log = OutputLog::new(80, 500);
@@ -855,6 +862,7 @@ mod tests {
         log.newline();
         log.divider_with_label("1.0s");
 
+        pf(&mut log);
         let vis = log.visible_lines();
         for i in 1..vis.len() {
             if vis[i].visible_width() == 0 && vis[i - 1].visible_width() == 0 {
@@ -868,7 +876,6 @@ mod tests {
         }
     }
 
-    /// User blocks have consistent spacing: 1 gap before, 1 gap after.
     #[test]
     fn user_block_spacing_consistent() {
         let mut log = OutputLog::new(80, 100);
@@ -887,7 +894,6 @@ mod tests {
         log.newline();
         log.divider_with_label("0.5s");
 
-        // Verify block pattern around each User block
         let user_indices: Vec<usize> = log.blocks.iter().enumerate()
             .filter(|(_, b)| matches!(b, Block::User(_)))
             .map(|(i, _)| i)
@@ -895,16 +901,117 @@ mod tests {
 
         assert_eq!(user_indices.len(), 2);
         for &ui in &user_indices {
-            // Block before User must be Gap
             assert!(ui > 0);
             assert!(matches!(&log.blocks[ui - 1], Block::Gap),
                 "block before User[{ui}] is not Gap: {:?}",
                 std::mem::discriminant(&log.blocks[ui - 1]));
-            // Block after User must be Gap
             assert!(ui + 1 < log.blocks.len());
             assert!(matches!(&log.blocks[ui + 1], Block::Gap),
                 "block after User[{ui}] is not Gap: {:?}",
                 std::mem::discriminant(&log.blocks[ui + 1]));
         }
+    }
+
+    /// Scroll down to bottom DURING streaming should resume auto-scroll.
+    #[test]
+    fn scroll_to_bottom_during_stream_resumes_auto() {
+        let mut log = OutputLog::new(80, 5);
+        for i in 0..20 {
+            log.info(&format!("line {i}"));
+        }
+        pf(&mut log);
+        log.scroll_up(10);
+
+        for i in 0..10 {
+            log.append_token(&format!("stream{i} "));
+        }
+
+        log.scroll_down(999);
+
+        for i in 10..30 {
+            log.append_token(&format!("stream{i} "));
+        }
+        log.append_token("\n");
+
+        pf(&mut log);
+        let (total, h, off) = log.scroll_info();
+        let max = total.saturating_sub(h);
+        assert_eq!(off, max,
+            "auto-scroll not resumed: total={total} h={h} off={off} max={max}");
+    }
+
+    /// User scrolls down step-by-step while content grows.
+    #[test]
+    fn scroll_down_stepwise_during_fast_stream_resumes_auto() {
+        let mut log = OutputLog::new(80, 10);
+        for i in 0..30 {
+            log.info(&format!("line {i}"));
+        }
+        pf(&mut log);
+        log.scroll_up(15);
+
+        for step in 0..20 {
+            log.append_token(&format!("new{step}\n"));
+            pf(&mut log); // simulate tick/render
+            log.scroll_down(3);
+        }
+
+        pf(&mut log);
+        let (total, h, off) = log.scroll_info();
+        let max = total.saturating_sub(h);
+        assert_eq!(off, max,
+            "auto-scroll should resume: total={total} h={h} off={off} max={max}");
+    }
+
+    /// After stream ends, scroll to bottom resumes auto-scroll.
+    #[test]
+    fn scroll_to_bottom_after_stream_ends_resumes_auto() {
+        let mut log = OutputLog::new(80, 10);
+        for i in 0..30 {
+            log.info(&format!("line {i}"));
+        }
+        pf(&mut log);
+        log.scroll_up(20);
+        log.newline();
+
+        for _ in 0..50 {
+            log.scroll_down(3);
+        }
+
+        log.info("next turn content");
+        pf(&mut log);
+        let (total, h, off) = log.scroll_info();
+        let max = total.saturating_sub(h);
+        assert_eq!(off, max,
+            "auto-scroll not resumed: total={total} h={h} off={off} max={max}");
+    }
+
+    /// Trackpad bounce at bottom should not break auto-scroll.
+    #[test]
+    fn trackpad_bounce_at_bottom_keeps_auto_scroll() {
+        let mut log = OutputLog::new(80, 10);
+        for i in 0..30 {
+            log.info(&format!("line {i}"));
+        }
+        pf(&mut log);
+        log.scroll_up(20);
+        for _ in 0..30 {
+            log.scroll_down(3);
+        }
+
+        pf(&mut log);
+        let (total, h, off) = log.scroll_info();
+        let max = total.saturating_sub(h);
+        assert_eq!(off, max, "should be at bottom");
+
+        // Trackpad bounce
+        log.scroll_up(3);
+
+        log.info("new content after bounce");
+        pf(&mut log);
+        let (total2, h2, off2) = log.scroll_info();
+        let max2 = total2.saturating_sub(h2);
+        assert_eq!(off2, max2,
+            "trackpad bounce broke auto-scroll: total={total2} h={h2} off={off2} max={max2}");
     }
 }

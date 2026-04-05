@@ -47,15 +47,24 @@ pub enum CursorState {
     Hidden,
 }
 
+/// Scrollbar cell type — supports fractional thumb edges.
+#[derive(Clone, Copy)]
+pub enum ScrollCell {
+    Track,
+    Thumb,
+    /// Top edge: thumb starts at 1/8th offset (1-7). Render lower block.
+    TopEdge(u8),
+    /// Bottom edge: thumb fills top N/8ths (1-7). Render upper block.
+    BottomEdge(u8),
+}
+
 /// Scrollbar overlay.
 pub struct Overlay {
     pub row: u16,
     pub col: u16,
-    pub ch_thumb: char,
-    pub ch_track: char,
     pub fg_thumb: Rgb,
     pub fg_track: Rgb,
-    pub positions: Vec<bool>,
+    pub cells: Vec<ScrollCell>,
 }
 
 /// Screen-space selection highlight (1-indexed, inclusive).
@@ -169,6 +178,7 @@ impl Renderer {
     }
 
     /// Compose all regions into cell buffer, diff against prev, write changes.
+    /// Uses synchronized rendering (DEC mode 2026) to prevent flicker.
     pub fn flush(&mut self) -> io::Result<()> {
         let bg = self
             .slots
@@ -186,6 +196,45 @@ impl Renderer {
             );
         }
 
+        // Paint scrollbar into cell buffer (before diff — no flicker)
+        if let Some(ov) = &self.overlay {
+            const LOWER: [char; 8] = [' ', '▁', '▂', '▃', '▄', '▅', '▆', '▇'];
+            let col = ov.col.saturating_sub(1); // 1-indexed → 0-indexed
+            for (j, &cell) in ov.cells.iter().enumerate() {
+                let row = ov.row.saturating_sub(1) + j as u16;
+                if row >= self.buf.height || col >= self.buf.width {
+                    continue;
+                }
+                let c = self.buf.get_mut(row, col);
+                match cell {
+                    ScrollCell::Track => {
+                        c.ch = '█';
+                        c.fg = ov.fg_track;
+                        c.bg = ov.fg_track;
+                    }
+                    ScrollCell::Thumb => {
+                        c.ch = '█';
+                        c.fg = ov.fg_thumb;
+                        c.bg = ov.fg_thumb;
+                    }
+                    ScrollCell::TopEdge(eighths) => {
+                        // Lower block: bottom=fg(thumb), top=bg(track)
+                        let fill = (8 - eighths).min(7) as usize;
+                        c.ch = LOWER[fill];
+                        c.fg = ov.fg_thumb;
+                        c.bg = ov.fg_track;
+                    }
+                    ScrollCell::BottomEdge(eighths) => {
+                        // Lower block: bottom=fg(track), top=bg(thumb)
+                        let empty = (8 - eighths).min(7) as usize;
+                        c.ch = LOWER[empty];
+                        c.fg = ov.fg_track;
+                        c.bg = ov.fg_thumb;
+                    }
+                }
+            }
+        }
+
         // Apply selection reverse
         if let Some(sel) = self.selection {
             self.apply_selection(sel);
@@ -196,6 +245,8 @@ impl Renderer {
         self.prev_hashes.resize(total_rows, 0);
         let mut any_diff = false;
 
+        // Synchronized rendering: buffer output until done (prevents flicker).
+        let _ = write!(self.out, "\x1b[?2026h");
         // Hide cursor before any row writes to prevent visible jumping
         let _ = write!(self.out, "\x1b[?25l");
 
@@ -209,27 +260,14 @@ impl Renderer {
             }
         }
 
-        // Scrollbar overlay — absolute cursor positioning, independent of content
-        if let Some(ov) = &self.overlay {
-            for (j, &is_thumb) in ov.positions.iter().enumerate() {
-                let row = ov.row + j as u16;
-                let col = ov.col;
-                let ch = if is_thumb { ov.ch_thumb } else { ov.ch_track };
-                let fg = if is_thumb { ov.fg_thumb } else { ov.fg_track };
-                let _ = write!(
-                    self.out,
-                    "\x1b[{row};{col}H\x1b[38;2;{};{};{}m{ch}",
-                    fg.0, fg.1, fg.2,
-                );
-            }
-            any_diff = true;
-        }
-
         // Restore cursor after all writes
         if let CursorState::Visible { row, col } = self.cursor {
             let _ = write!(self.out, "\x1b[{row};{col}H\x1b[?25h");
             any_diff = true;
         }
+
+        // End synchronized rendering — terminal paints atomically.
+        let _ = write!(self.out, "\x1b[?2026l");
 
         if any_diff {
             self.out.flush()?;

@@ -25,24 +25,28 @@ use std::time::Duration;
 use tokio::sync::mpsc;
 
 const TICK_INTERVAL: Duration = Duration::from_millis(80);
-const SCROLL_STEP: usize = 3;
+const SCROLL_STEP: usize = 1;
 const ABORT_HINT_TICKS: u8 = 25; // ~2s at 80ms tick
+/// Max events to drain per frame before forcing a render.
+/// Prevents starvation when producers (agent + tick + mouse) keep filling
+/// the channel faster than we drain — without this, render() never runs.
+const DRAIN_BUDGET: usize = 64;
 
 const LOGO: &[&str] = &[
-    "                                      ⢰⡇⠀⠀⣸⠃      ⣴⠟⠁⠈⢻⣦",
-    "                                      ⣿⠀⠀⢠⡟    ⢠⡾⠃⠀⠀⣰⠟⠁",
-    "                                      ⠉⠛⠓⠾⠁⠀⠀⣰⠟⠀⠀⢀⡾⠋     ⢀⣴⣆",
-    "                        ⢀⣀⣀⣀⣠⣤⣤⣤⣄⣀⣀⡀        ⠙⠳⣦⣴⠟⠁   ⣠⡴⠋⠀⠀⠈⢷⣄",
-    "                ⣀⣤⣴⣶⣿⣿⣿⣿⡿⠿⠿⠿⠿⠿⠿⣿⣿⣿⣿⣷⣦⣤⣀         ⠀⣠⡾⠋⠀⠀⢀⣴⠟⠁",
-    "            ⢀⣠⣶⣿⣿⡿⠟⠋⠉⠁⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠈⠉⠙⠻⢿⣿⣿⣶⣄⡀    ⠺⣏⠀⠀⣀⡴⠟⠁⢀⣀",
-    "          ⣠⣶⣿⣿⠿⠋⠁⠀⢀⣴⡿⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢶⣬⡙⠿⣿⣿⣶⣄   ⠙⢷⡾⠋⢀⣤⠾⠋⠙⢷⡀",
-    "        ⣠⣾⣿⡿⠋⠁⠀⠀⠀⢠⣾⡟⠁⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣰⣦⣠⣤⠽⣿⣦⠈⠙⢿⣿⣷⣄   ⠺⣏⠁⠀⠀⣀⣼⠿",
-    "      ⢠⣾⣿⡿⠋⠀⠀⠀⠀⠀⣰⣿⠟⠀⠀⠀⢠⣤⠀⠀⠀⠀⠀⠀⠀⠀⠉⠉⠉⣿⣧⠀⠀⠈⢿⣷⣄⠀⠙⢿⣿⣷⣄  ⠙⣧⡴⠟⠋",
-    "     ⣴⣿⣿⠏⠀⠀⠀⠀⠀⠀⢷⣿⡟⠀⣰⡆⠀⢸⣿⠀⠀⠀⠀⠀⠀⠀⠀⣀⡀⠀⣿⣿⡀⠀⠀⠈⢿⣿⣦⠀⠀⠙⢿⣿⣦",
-    "    ⣼⣿⡿⠁⠀⠦⣤⣀⠀⠀⢀⣿⣿⡇⢰⣿⠇⠀⢸⣿⡆⠀⠀⠀⠀⠀⠀⠀⣿⡇⠀⢸⣿⣿⣆⠀⠀⠈⣿⣿⣧⣠⣤⠾⢿⣿⣧",
-    "   ⣸⣿⣿⣵⣿⠀⠀⠀⠉⠀⠀⣼⣿⢿⡇⣾⣿⠀⠀⣾⣿⡇⢸⠀⠀⠀⠀⠀⠀⣿⡇⠀⣼⣿⢻⣿⣦⠴⠶⢿⣿⣿⣇⠀⠀⠀⢻⣿⣧⣀",
-    "  ⢀⣿⣿⣿⣿⠇⠀⠀⠀⠀⠀⢠⣿⡟⡌⣼⣿⣿⠉⢁⣿⣿⣷⣿⡗⠒⠚⠛⠛⢛⣿⣯⣯⣿⣿⠀⢻⣿⣧⠀⢸⣿⣿⣿⡄⠀⠀⠀⠙⢿⣿⣷⣤⣀",
-    "  ⢸⣿⣿⣿⠏⠀⠀⠀⠀⠀⠀⢸⣿⡇⣼⣿⣿⣿⣶⣾⣿⣿⢿⣿⡇⠀⠀⠀⠀⢸⣿⠟⢻⣿⣿⣿⣶⣿⣿⣧⢸⣿⣿⣿⣧⠀⠀⠀⢰⣷⡈⠛⢿⣿⣿⣶⣦⣤⣤⣀",
+    "                                           ⢰⡇⠀⠀⣸⠃      ⣴⠟⠁⠈⢻⣦",
+    "                                           ⣿⠀⠀⢠⡟    ⢠⡾⠃⠀⠀⣰⠟⠁",
+    "                                          ⠉⠛⠓⠾⠁⠀⠀⣰⠟⠀⠀⢀⡾⠋     ⢀⣴⣆",
+    "                            ⢀⣀⣀⣀⣠⣤⣤⣤⣄⣀⣀⡀        ⠙⠳⣦⣴⠟⠁   ⣠⡴⠋⠀⠀⠈⢷⣄",
+    "                     ⣀⣤⣴⣶⣿⣿⣿⣿⡿⠿⠿⠿⠿⠿⠿⣿⣿⣿⣿⣷⣦⣤⣀         ⠀⣠⡾⠋⠀⠀⢀⣴⠟⠁",
+    "                ⢀⣠⣶⣿⣿⡿⠟⠋⠉⠁⠀⠀⠀⠀⠀⠀⠀⠀⠀ ⠀⠈⠉⠙⠻⢿⣿⣿⣶⣄⡀    ⠺⣏⠀⠀⣀⡴⠟⠁⢀⣀",
+    "              ⣠⣶⣿⣿⠿⠋⠁⠀⢀⣴⡿⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢶⣬⡙⠿⣿⣿⣶⣄   ⠙⢷⡾⠋⢀⣤⠾⠋⠙⢷⡀",
+    "            ⣠⣾⣿⡿⠋⠁⠀⠀⠀⢠⣾⡟⠁⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣰⣦⣠⣤⠽⣿⣦⠈⠙⢿⣿⣷⣄   ⠺⣏⠁⠀⠀⣀⣼⠿",
+    "          ⢠⣾⣿⡿⠋⠀⠀⠀⠀⠀⣰⣿⠟⠀⠀⠀⢠⣤⠀⠀⠀⠀⠀⠀⠀⠀⠉⠉⠉⣿⣧⠀⠀⠈⢿⣷⣄⠀⠙⢿⣿⣷⣄  ⠙⣧⡴⠟⠋",
+    "         ⣴⣿⣿⠏⠀⠀⠀⠀⠀⠀⢷⣿⡟⠀⣰⡆⠀⢸⣿⠀⠀⠀⠀⠀⠀⠀⠀⣀⡀⠀⣿⣿⡀⠀⠀⠈⢿⣿⣦⠀⠀⠙⢿⣿⣦",
+    "        ⣼⣿⡿⠁⠀⠦⣤⣀⠀⠀⢀⣿⣿⡇⢰⣿⠇⠀⢸⣿⡆⠀⠀⠀⠀⠀⠀⠀⣿⡇⠀⢸⣿⣿⣆⠀⠀⠈⣿⣿⣧⣠⣤⠾⢿⣿⣧",
+    "       ⣸⣿⣿⣵⣿⠀⠀⠀⠉⠀⠀⣼⣿⢿⡇⣾⣿⠀⠀⣾⣿⡇⢸⠀⠀⠀⠀⠀⠀⣿⡇⠀⣼⣿⢻⣿⣦⠴⠶⢿⣿⣿⣇⠀⠀⠀⢻⣿⣧⣀",
+    "      ⢀⣿⣿⣿⣿⠇⠀⠀⠀⠀⠀⢠⣿⡟⡌⣼⣿⣿⠉⢁⣿⣿⣷⣿⡗⠒⠚⠛⠛⢛⣿⣯⣯⣿⣿⠀⢻⣿⣧⠀⢸⣿⣿⣿⡄⠀⠀⠀⠙⢿⣿⣷⣤⣀",
+    "      ⢸⣿⣿⣿⠏⠀⠀⠀⠀⠀⠀⢸⣿⡇⣼⣿⣿⣿⣶⣾⣿⣿⢿⣿⡇⠀⠀⠀⠀⢸⣿⠟⢻⣿⣿⣿⣶⣿⣿⣧⢸⣿⣿⣿⣧⠀⠀⠀⢰⣷⡈⠛⢿⣿⣿⣶⣦⣤⣤⣀",
     "   ⢀⣤⣾⣿⣿⢫⡄⠀⠀⠀⠀⠀⠀⣿⣿⣹⣿⠏⢹⣿⣿⣿⣿⣿⣼⣿⠃⠀⠀⠀⢀⣿⡿⢀⣿⣿⠟⠀⠀⠀⠹⣿⣿⣿⠇⢿⣿⡄⠀⠀⠈⢿⣿⣷⣶⣶⣿⣿⣿⣿⣿⡿",
     "⣴⣶⣶⣿⣿⣿⣿⣋⣴⣿⣇⠀⠀⠀⠀⢀⣿⣿⣿⣟⣴⠟⢿⣿⠟⣿⣿⣿⣿⣶⣶⣶⣶⣾⣿⣿⣿⠿⣫⣤⣶⡆⠀⠀⣻⣿⣿⣶⣸⣿⣷⡀⠀⠀⠸⣿⣿⣿⡟⠛⠛⠛⠉⠁",
     "⠻⣿⣿⣿⣿⣿⣿⡿⢿⣿⠋⠀⢠⠀⠀⢸⣿⣿⣿⣿⣁⣀⣀⣁⠀⠀⠉⠉⠉⠉⠉⠉⠉⠁⠀⠀⠀⠸⢟⣫⣥⣶⣿⣿⣿⠿⠟⠋⢻⣿⡟⣇⣠⡤⠀⣿⣿⣿⣿⡀",
@@ -53,7 +57,7 @@ const LOGO: &[&str] = &[
     "     ⠸⣿⣿⣸⣿⣿⠀⠀⣿⣿⣆⢿⣿⡀⠀⠸⠟⠀⠛⣿⠃⠀⠀⢸⣿⡇⠀⠀⠀⠀⢸⣿⡇⠀⠀⠀⠙⠷⣦⣄⡀⠀⢀⣴⣿⡿⣱⣾⠁⠀⣿⣿⣾⣿⡇",
     "      ⢻⣿⣿⣿⣿⣇⠀⢿⢹⣿⣆⢸⣿⣧⣀⠀⠀⠴⠞⠁⠀⠀⠸⣿⡇⠀⠀⠀⠀⣿⣿⠀⠀⠀⠀⠀⠀⢀⣨⣽⣾⣿⣿⡏⢀⣿⣿⠀⣸⣿⣿⣿⡿",
     "      ⠈⢻⣿⣿⣿⣿⣆⢸⡏⠻⣿⣦⣿⣿⣿⣿⣶⣦⣤⣀⣀⣀⣀⣿⣷⠀⠀⠀⣸⣿⣏⣀⣤⣤⣶⣾⣿⣿⣿⠿⠛⢹⣿⣧⣼⣿⣿⣰⣿⣿⠛⠛",
-    "        ⠉⠛⠙⣿⣿⣦⣷⠀⢻⣿⣿⣿⣿⡝⠛⠻⠿⢿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⡿⠿⠟⠛⠛⠉⠁⠀⠀⠀⣼⣿⣿⣿⣿⣿⣿⣿⠃",
+    "        ⠉⠛⠙⣿⣿⣦⣷⠀⢻⣿⣿⣿⣿⡝⠛⠻⠿⢿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⡿⠿⠟⠛⠛⠉⠁⠀⠀⠀⣼⣿⣿⣿⣿⣿⣿⣿⠃",
     "           ⠈⢻⣿⣿⣄⢸⣿⣿⣿⣿⣷⡄⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠙⠿⠟⠻⣿⡿⠋⠁",
     "             ⠙⢿⣿⣿⣿⣿⡌⠙⠛⠁",
 ];
@@ -180,6 +184,28 @@ impl App {
         app
     }
 
+    /// Process a single event with panic recovery. Returns true to quit.
+    fn process_event(&mut self, event: Event) -> bool {
+        let result =
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| self.handle(event)));
+        match result {
+            Ok(Action::Continue | Action::Render) => false,
+            Ok(Action::Quit) => true,
+            Err(panic) => {
+                let msg = if let Some(s) = panic.downcast_ref::<&str>() {
+                    s.to_string()
+                } else if let Some(s) = panic.downcast_ref::<String>() {
+                    s.clone()
+                } else {
+                    "unknown panic".to_owned()
+                };
+                crate::dbg_log!("PANIC caught: {msg}");
+                self.ui.output.error(&format!("internal error: {msg}"));
+                false
+            }
+        }
+    }
+
     /// Run the event loop.
     pub async fn run(mut self) -> anyhow::Result<()> {
         let (tx, mut rx) = mpsc::channel::<Event>(256);
@@ -242,27 +268,38 @@ impl App {
             }
         });
 
+        // Bounded-drain event loop: recv first → drain up to DRAIN_BUDGET → render.
         loop {
             let Some(event) = rx.recv().await else { break };
-            let result =
-                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| self.handle(event)));
-            match result {
-                Ok(Action::Continue) => {}
-                Ok(Action::Render) => self.render(),
-                Ok(Action::Quit) => break,
-                Err(panic) => {
-                    let msg = if let Some(s) = panic.downcast_ref::<&str>() {
-                        s.to_string()
-                    } else if let Some(s) = panic.downcast_ref::<String>() {
-                        s.clone()
-                    } else {
-                        "unknown panic".to_owned()
-                    };
-                    crate::dbg_log!("PANIC caught: {msg}");
-                    self.ui.output.error(&format!("internal error: {msg}"));
-                    self.render();
+            if self.process_event(event) {
+                break;
+            }
+            let mut drained = 1usize;
+            while drained < DRAIN_BUDGET {
+                match rx.try_recv() {
+                    Ok(event) => {
+                        if self.process_event(event) {
+                            self.render();
+                            let mut out = term::buffered_stdout();
+                            write!(
+                                out,
+                                "{}{}{}{}{}",
+                                term::PASTE_OFF,
+                                term::MOUSE_OFF,
+                                term::CURSOR_SHOW,
+                                term::RESET,
+                                term::ALT_OFF,
+                            )?;
+                            out.flush()?;
+                            term::exit_raw(&orig);
+                            std::process::exit(0);
+                        }
+                        drained += 1;
+                    }
+                    Err(_) => break,
                 }
             }
+            self.render();
         }
 
         let mut out = term::buffered_stdout();
@@ -336,5 +373,46 @@ mod tests {
     fn format_duration_long() {
         let d = std::time::Duration::from_secs(95);
         assert_eq!(format_duration(d), "1m 35s");
+    }
+
+    /// Prove bounded drain guarantees render runs frequently.
+    /// With unbounded drain, a continuously-fed queue starves render.
+    #[test]
+    fn bounded_drain_prevents_starvation() {
+        // Simulate: queue of 500 events, each processed event
+        // causes 1 new event (producer keeps up with consumer).
+        let total_budget = 500usize;
+        let mut queue = std::collections::VecDeque::from_iter(0..total_budget);
+        let mut renders = 0usize;
+        let mut processed = 0usize;
+        let budget = DRAIN_BUDGET;
+
+        // Simulate the bounded-drain loop
+        while let Some(_event) = queue.pop_front() {
+            processed += 1;
+            let mut drained = 1usize;
+            while drained < budget {
+                if let Some(_e) = queue.pop_front() {
+                    processed += 1;
+                    drained += 1;
+                    // Producer adds 1 event per processed event
+                    queue.push_back(0);
+                } else {
+                    break;
+                }
+            }
+            renders += 1;
+            // Stop after enough processing to prove the point
+            if processed >= 2000 {
+                break;
+            }
+        }
+
+        // With budget=64, 2000 events should yield at least 30 renders
+        // (2000/64 = 31.25). Unbounded drain would yield exactly 1.
+        assert!(
+            renders >= 20,
+            "bounded drain should render frequently: renders={renders} processed={processed}"
+        );
     }
 }

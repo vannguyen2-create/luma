@@ -125,6 +125,9 @@ impl super::App {
 
     /// Compose all regions and flush to terminal.
     pub(super) fn render(&mut self) {
+        // Two-phase: reconcile all dirty state once before composing.
+        self.ui.output.prepare_frame();
+
         let content_w = self.layout.output.content_width();
         let content_h = self.layout.output.content_height();
         let (total, visible, _) = self.ui.output.scroll_info();
@@ -133,6 +136,7 @@ impl super::App {
         if ow != self.ui.last_output_width {
             self.ui.output.set_size(ow as usize, content_h as usize);
             self.ui.last_output_width = ow;
+            self.ui.output.prepare_frame();
         }
 
         let dropdown = self.ui.prompt.dropdown();
@@ -244,29 +248,65 @@ impl super::App {
     }
 
     fn update_scrollbar(&mut self) {
+        use crate::tui::renderer::ScrollCell;
+
         let (total, visible, offset) = self.ui.output.scroll_info();
         if total <= visible {
             self.renderer.set_overlay(None);
             return;
         }
         let r = &self.layout.output;
-        let th = (visible * visible / total).max(1);
-        let mo = total.saturating_sub(visible);
-        let ts = if mo > 0 {
-            offset * (visible - th) / mo
+        let track = visible; // cells
+
+        // Compute thumb in 1/8th cell units (subcells) for smooth positioning.
+        const SUB: usize = 8;
+        let track_sub = track * SUB;
+        let thumb_sub = (track_sub * visible / total).max(SUB); // min 1 cell
+        let max_off = total.saturating_sub(visible);
+        let scroll_sub = track_sub.saturating_sub(thumb_sub);
+        let start_sub = if max_off > 0 {
+            offset * scroll_sub / max_off
         } else {
             0
         };
-        let positions: Vec<bool> =
-            (0..visible).map(|i| i >= ts && i < ts + th).collect();
+        let end_sub = start_sub + thumb_sub;
+
+        let mut cells = Vec::with_capacity(track);
+        for i in 0..track {
+            let cell_start = i * SUB;
+            let cell_end = cell_start + SUB;
+
+            if cell_end <= start_sub || cell_start >= end_sub {
+                // Entirely outside thumb
+                cells.push(ScrollCell::Track);
+            } else if cell_start >= start_sub && cell_end <= end_sub {
+                // Entirely inside thumb
+                cells.push(ScrollCell::Thumb);
+            } else if cell_start < start_sub && cell_end > start_sub {
+                // Top edge: thumb starts partway through this cell
+                let frac = (start_sub - cell_start) as u8;
+                if frac == 0 {
+                    cells.push(ScrollCell::Thumb);
+                } else {
+                    cells.push(ScrollCell::TopEdge(frac));
+                }
+            } else {
+                // Bottom edge: thumb ends partway through this cell
+                let frac = (end_sub - cell_start) as u8;
+                if frac >= SUB as u8 {
+                    cells.push(ScrollCell::Thumb);
+                } else {
+                    cells.push(ScrollCell::BottomEdge(frac));
+                }
+            }
+        }
+
         self.renderer.set_overlay(Some(Overlay {
             row: r.row,
             col: r.col + r.width - 1,
-            ch_thumb: '█',
-            ch_track: '▕',
             fg_thumb: palette::DIM,
             fg_track: palette::BORDER,
-            positions,
+            cells,
         }));
     }
 }

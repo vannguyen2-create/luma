@@ -850,6 +850,7 @@ mod tests {
         log.tool_start("edit", "test.rs");
         log.tool_end("edit", "");
 
+        log.prepare_frame();
         let vis = log.visible_lines().to_vec();
         let dump: Vec<String> = vis.iter().enumerate().map(|(i, l)| {
             let t: String = l.spans.iter().map(|s| s.text.as_str()).collect();
