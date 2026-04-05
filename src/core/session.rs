@@ -1,0 +1,213 @@
+/// Session — persistent conversation with JSON storage.
+use crate::core::types::Message;
+use serde::{Deserialize, Serialize};
+use std::fs;
+use std::path::PathBuf;
+
+/// Cumulative token usage for a session.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct SessionUsage {
+    pub input_tokens: u64,
+    pub output_tokens: u64,
+    pub cache_read: u64,
+    pub cache_write: u64,
+}
+
+/// A persisted conversation session.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Session {
+    pub id: String,
+    pub title: String,
+    pub created_at: String,
+    pub updated_at: String,
+    pub messages: Vec<Message>,
+    #[serde(default)]
+    pub usage: SessionUsage,
+    #[serde(default)]
+    pub turn_durations: Vec<f64>,
+}
+
+/// Summary for listing sessions (no messages loaded).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionMeta {
+    pub id: String,
+    pub title: String,
+    pub created_at: String,
+    pub updated_at: String,
+    pub message_count: usize,
+    pub last_preview: String,
+}
+
+impl Session {
+    /// Create a new empty session.
+    pub fn new() -> Self {
+        let id = generate_id();
+        let now = now_iso();
+        Self {
+            id,
+            title: String::new(),
+            created_at: now.clone(),
+            updated_at: now,
+            messages: Vec::new(),
+            usage: SessionUsage::default(),
+            turn_durations: Vec::new(),
+        }
+    }
+
+    /// Auto-title from first user message if untitled.
+    pub fn auto_title(&mut self) {
+        if !self.title.is_empty() {
+            return;
+        }
+        if let Some(msg) = self
+            .messages
+            .iter()
+            .find(|m| m.role == crate::core::types::Role::User)
+        {
+            let first_line = msg.content.lines().next().unwrap_or("");
+            self.title = first_line.chars().take(60).collect();
+        }
+    }
+
+    /// Save to disk. Skips empty sessions (no user messages).
+    pub fn save(&mut self) {
+        let has_user_msg = self
+            .messages
+            .iter()
+            .any(|m| m.role == crate::core::types::Role::User);
+        if !has_user_msg {
+            return;
+        }
+        self.updated_at = now_iso();
+        self.auto_title();
+        let dir = sessions_dir();
+        let _ = fs::create_dir_all(&dir);
+        let path = dir.join(format!("{}.json", self.id));
+        if let Ok(json) = serde_json::to_string(self) {
+            let _ = fs::write(path, json);
+        }
+    }
+
+    /// Load a session by ID.
+    pub fn load(id: &str) -> Option<Self> {
+        let path = sessions_dir().join(format!("{id}.json"));
+        let content = fs::read_to_string(path).ok()?;
+        serde_json::from_str(&content).ok()
+    }
+
+    /// Delete from disk.
+    #[allow(dead_code)]
+    pub fn delete(id: &str) {
+        let path = sessions_dir().join(format!("{id}.json"));
+        let _ = fs::remove_file(path);
+    }
+}
+
+/// List all sessions sorted by updated_at (newest first).
+pub fn list_sessions() -> Vec<SessionMeta> {
+    let dir = sessions_dir();
+    let Ok(entries) = fs::read_dir(&dir) else {
+        return Vec::new();
+    };
+
+    let mut sessions: Vec<SessionMeta> = entries
+        .flatten()
+        .filter(|e| e.path().extension().map(|x| x == "json").unwrap_or(false))
+        .filter_map(|e| {
+            let content = fs::read_to_string(e.path()).ok()?;
+            let val: serde_json::Value = serde_json::from_str(&content).ok()?;
+            let messages = val["messages"].as_array();
+            let message_count = messages.map(|a| a.len()).unwrap_or(0);
+            let last_preview = messages
+                .and_then(|msgs| {
+                    msgs.iter()
+                        .rev()
+                        .find(|m| m["role"].as_str() == Some("user"))
+                })
+                .and_then(|m| m["content"].as_str())
+                .and_then(|c| c.lines().next())
+                .map(|l| l.chars().take(50).collect::<String>())
+                .unwrap_or_default();
+            Some(SessionMeta {
+                id: val["id"].as_str()?.to_owned(),
+                title: val["title"].as_str().unwrap_or("").to_owned(),
+                created_at: val["created_at"].as_str().unwrap_or("").to_owned(),
+                updated_at: val["updated_at"].as_str().unwrap_or("").to_owned(),
+                message_count,
+                last_preview,
+            })
+        })
+        .collect();
+
+    sessions.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+    sessions
+}
+
+fn sessions_dir() -> PathBuf {
+    let home = std::env::var("HOME").unwrap_or_else(|_| ".".into());
+    PathBuf::from(home).join(".config/luma/sessions")
+}
+
+fn generate_id() -> String {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let ts = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis();
+    format!("ses_{ts:x}")
+}
+
+fn now_iso() -> String {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let secs = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    // Simple ISO-ish format without chrono dep
+    format!("{secs}")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn new_session_has_id() {
+        let s = Session::new();
+        assert!(!s.id.is_empty());
+        assert!(s.id.starts_with("ses_"));
+    }
+
+    #[test]
+    fn auto_title_from_user_message() {
+        let mut s = Session::new();
+        s.messages.push(Message {
+            role: crate::core::types::Role::User,
+            content: "Hello, can you help me with Rust?".into(),
+            tool_call_id: None,
+            tool_calls: None,
+        });
+        s.auto_title();
+        assert_eq!(s.title, "Hello, can you help me with Rust?");
+    }
+
+    #[test]
+    fn auto_title_truncates_long() {
+        let mut s = Session::new();
+        let long = "x".repeat(100);
+        s.messages.push(Message {
+            role: crate::core::types::Role::User,
+            content: long,
+            tool_call_id: None,
+            tool_calls: None,
+        });
+        s.auto_title();
+        assert_eq!(s.title.len(), 60);
+    }
+
+    #[test]
+    fn list_sessions_empty() {
+        // Just verify it doesn't panic
+        let _ = list_sessions();
+    }
+}

@@ -1,0 +1,290 @@
+/// Turn execution — auth, provider, tool loop, summaries.
+use super::AgentConfig;
+use crate::core::provider::Provider;
+use crate::core::registry::Registry;
+use crate::core::types::{Message, Role, ToolCall};
+use crate::event::Event;
+use anyhow::Result;
+use tokio::sync::mpsc;
+
+const MAX_ITERATIONS: usize = 50;
+const MAX_RESULT_LEN: usize = 32_000;
+
+/// Run a chat turn: resolve auth → build provider → run tool loop.
+/// Retries once on 401.
+pub async fn run_chat_turn(
+    messages: &mut Vec<Message>,
+    config: &AgentConfig,
+    registry: &Registry,
+    session_id: &str,
+    session_usage: &mut crate::core::session::SessionUsage,
+    tx: &mpsc::Sender<Event>,
+    cancel: tokio_util::sync::CancellationToken,
+) -> Result<()> {
+    use crate::config::auth::{self, AuthProvider};
+
+    let provider_kind = match config.source.as_str() {
+        "anthropic" => AuthProvider::Anthropic,
+        _ => AuthProvider::OpenAI,
+    };
+
+    let auth = auth::resolve(provider_kind).await?;
+    let provider = build_provider(config, &auth, session_id);
+
+    match run_turn(messages, &*provider, registry, session_usage, tx, cancel.clone()).await {
+        Ok(()) => Ok(()),
+        Err(e) if e.to_string().contains("401") || e.to_string().contains("Unauthorized") => {
+            let _ = tx
+                .send(Event::ToolOutput {
+                    name: String::new(),
+                    chunk: "Token expired, refreshing...".into(),
+                })
+                .await;
+            auth::clear_cached(provider_kind);
+            let auth = auth::resolve(provider_kind).await?;
+            let provider = build_provider(config, &auth, session_id);
+            run_turn(messages, &*provider, registry, session_usage, tx, cancel).await
+        }
+        Err(e) => Err(e),
+    }
+}
+
+fn build_provider(
+    config: &AgentConfig,
+    auth: &crate::config::auth::Credential,
+    session_id: &str,
+) -> Box<dyn Provider> {
+    use crate::provider::claude::ClaudeProvider;
+    use crate::provider::codex::CodexProvider;
+    use crate::provider::openai::OpenAIProvider;
+
+    match config.source.as_str() {
+        "anthropic" => {
+            let mut p = ClaudeProvider::new(&config.model_id, &auth.token, auth.is_oauth);
+            p.set_thinking(config.thinking);
+            Box::new(p)
+        }
+        "codex" => {
+            let mut p = CodexProvider::new(
+                &config.model_id, &auth.token, auth.account_id.clone(), session_id,
+            );
+            p.set_thinking(config.thinking);
+            Box::new(p)
+        }
+        _ => {
+            let mut p = OpenAIProvider::new(&config.model_id, &auth.token);
+            p.set_thinking(config.thinking);
+            Box::new(p)
+        }
+    }
+}
+
+/// Run one turn: provider call → tool execution loop.
+async fn run_turn(
+    messages: &mut Vec<Message>,
+    provider: &dyn Provider,
+    registry: &Registry,
+    session_usage: &mut crate::core::session::SessionUsage,
+    tx: &mpsc::Sender<Event>,
+    cancel: tokio_util::sync::CancellationToken,
+) -> Result<()> {
+    let schemas = registry.schemas();
+
+    for _ in 0..MAX_ITERATIONS {
+        if cancel.is_cancelled() { anyhow::bail!("Aborted"); }
+
+        let (response, usage) = provider
+            .stream(messages, &schemas, tx.clone(), cancel.clone())
+            .await?;
+
+        session_usage.input_tokens += usage.input_tokens;
+        session_usage.output_tokens += usage.output_tokens;
+        session_usage.cache_read += usage.cache_read.unwrap_or(0);
+        session_usage.cache_write += usage.cache_write.unwrap_or(0);
+
+        messages.push(response.clone());
+
+        if cancel.is_cancelled() { anyhow::bail!("Aborted"); }
+
+        let tool_calls = match &response.tool_calls {
+            Some(tcs) if !tcs.is_empty() => tcs.clone(),
+            _ => return Ok(()),
+        };
+
+        let tool_results = execute_tools(&tool_calls, registry, tx, cancel.clone()).await;
+
+        if cancel.is_cancelled() { anyhow::bail!("Aborted"); }
+
+        for (tc_id, result) in tool_results {
+            let mut truncated = result;
+            if truncated.len() > MAX_RESULT_LEN {
+                truncated.truncate(MAX_RESULT_LEN);
+                truncated.push_str("\n[truncated]");
+            }
+            messages.push(Message {
+                role: Role::Tool,
+                content: truncated,
+                tool_call_id: Some(tc_id),
+                tool_calls: None,
+            });
+        }
+    }
+    Ok(())
+}
+
+/// Check if a read tool call targets a SKILL.md file.
+fn skill_name_from_read(tool_name: &str, args: &serde_json::Value) -> Option<String> {
+    if tool_name != "read" { return None; }
+    let path = args.get("path")?.as_str()?;
+    if !path.ends_with("SKILL.md") { return None; }
+    // Extract skill name from parent directory
+    std::path::Path::new(path)
+        .parent()
+        .and_then(|p| p.file_name())
+        .map(|n| n.to_string_lossy().into_owned())
+}
+
+/// Execute a single tool call, streaming output events.
+async fn execute_one(
+    tc: &ToolCall,
+    registry: &Registry,
+    tx: &mpsc::Sender<Event>,
+    cancel: tokio_util::sync::CancellationToken,
+) -> (String, String) {
+    let args: serde_json::Value = serde_json::from_str(&tc.function.arguments)
+        .unwrap_or(serde_json::Value::Object(Default::default()));
+
+    let skill = skill_name_from_read(&tc.function.name, &args);
+
+    let result = match registry.get(&tc.function.name) {
+        Some(tool) => {
+            if let Some(name) = &skill {
+                let _ = tx.send(Event::SkillStart(name.clone())).await;
+            }
+
+            let summary = format_tool_summary(&tc.function.name, &args);
+            let _ = tx.send(Event::ToolStart { name: tc.function.name.clone(), summary }).await;
+
+            let (output_tx, mut output_rx) = mpsc::channel::<String>(64);
+            let tx_fwd = tx.clone();
+            let tool_name = tc.function.name.clone();
+            let fwd_handle = tokio::spawn(async move {
+                while let Some(chunk) = output_rx.recv().await {
+                    let _ = tx_fwd.send(Event::ToolOutput { name: tool_name.clone(), chunk }).await;
+                }
+            });
+
+            let res = tool.execute(args, output_tx, cancel).await;
+            fwd_handle.await.ok();
+
+            match res {
+                Ok(r) => {
+                    let end_summary = format_tool_result(&tc.function.name, &r);
+                    let _ = tx.send(Event::ToolEnd { name: tc.function.name.clone(), summary: end_summary }).await;
+                    if let Some(name) = &skill {
+                        let _ = tx.send(Event::SkillEnd(format!("loaded {name}"))).await;
+                    }
+                    r
+                }
+                Err(e) => {
+                    let msg = format!("Error: {e}");
+                    let _ = tx.send(Event::ToolEnd { name: tc.function.name.clone(), summary: msg.clone() }).await;
+                    if let Some(name) = &skill {
+                        let _ = tx.send(Event::SkillEnd(format!("failed to load {name}"))).await;
+                    }
+                    msg
+                }
+            }
+        }
+        None => format!("Unknown tool: {}", tc.function.name),
+    };
+    (tc.id.clone(), result)
+}
+
+/// Execute tool calls — concurrent when multiple, preserving order.
+pub async fn execute_tools(
+    tool_calls: &[ToolCall],
+    registry: &Registry,
+    tx: &mpsc::Sender<Event>,
+    cancel: tokio_util::sync::CancellationToken,
+) -> Vec<(String, String)> {
+    if tool_calls.len() == 1 {
+        return vec![execute_one(&tool_calls[0], registry, tx, cancel).await];
+    }
+    let futures: Vec<_> = tool_calls
+        .iter()
+        .map(|tc| execute_one(tc, registry, tx, cancel.clone()))
+        .collect();
+    futures::future::join_all(futures).await
+}
+
+use super::summary::{format_tool_result, format_tool_summary};
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::core::registry::Registry;
+    use crate::core::tool::Tool;
+    use std::pin::Pin;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use tokio_util::sync::CancellationToken;
+
+    struct SlowTool { counter: &'static AtomicUsize }
+
+    impl Tool for SlowTool {
+        fn name(&self) -> &str { "slow" }
+        fn schema(&self) -> crate::core::types::ToolSchema {
+            crate::core::types::ToolSchema {
+                name: "slow".into(), description: "test".into(),
+                parameters: serde_json::json!({}),
+            }
+        }
+        fn execute(
+            &self, _args: serde_json::Value, _output_tx: mpsc::Sender<String>,
+            _cancel: CancellationToken,
+        ) -> Pin<Box<dyn std::future::Future<Output = anyhow::Result<String>> + Send + '_>> {
+            let counter = self.counter;
+            Box::pin(async move {
+                counter.fetch_add(1, Ordering::SeqCst);
+                tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+                Ok(format!("done_{}", counter.load(Ordering::SeqCst)))
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn parallel_tool_execution() {
+        static COUNTER: AtomicUsize = AtomicUsize::new(0);
+        COUNTER.store(0, Ordering::SeqCst);
+
+        let mut registry = Registry::new();
+        registry.register(Box::new(SlowTool { counter: &COUNTER }));
+
+        let (tx, _rx) = mpsc::channel(64);
+        let cancel = CancellationToken::new();
+
+        let calls = vec![
+            ToolCall {
+                id: "tc_1".into(), r#type: "function".into(),
+                function: crate::core::types::ToolCallFunction {
+                    name: "slow".into(), arguments: "{}".into(),
+                },
+            },
+            ToolCall {
+                id: "tc_2".into(), r#type: "function".into(),
+                function: crate::core::types::ToolCallFunction {
+                    name: "slow".into(), arguments: "{}".into(),
+                },
+            },
+        ];
+
+        let start = std::time::Instant::now();
+        let results = execute_tools(&calls, &registry, &tx, cancel).await;
+        let elapsed = start.elapsed();
+
+        assert_eq!(results.len(), 2);
+        assert_eq!(results[0].0, "tc_1");
+        assert_eq!(results[1].0, "tc_2");
+        assert!(elapsed.as_millis() < 100, "took {}ms, expected parallel", elapsed.as_millis());
+    }
+}

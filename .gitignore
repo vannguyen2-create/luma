@@ -1,0 +1,16 @@
+# Build artifacts
+/target/
+
+# Editor
+.idea/
+.vscode/
+*.swp
+
+# OS
+.DS_Store
+
+# Env
+.env
+
+# Screenshot
+youtube_screenshot.png

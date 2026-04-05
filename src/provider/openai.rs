@@ -1,0 +1,177 @@
+/// OpenAI-compatible chat completions provider with SSE streaming.
+use crate::core::provider::Provider;
+use crate::core::types::{Message, Role, ToolCall, ToolCallFunction, ToolSchema, ThinkingLevel, Usage};
+use crate::event::Event;
+use crate::provider::sse::{post_sse, SseEvent};
+use anyhow::Result;
+use std::collections::HashMap;
+use tokio::sync::mpsc;
+use tokio_util::sync::CancellationToken;
+
+const BASE_URL: &str = "https://api.openai.com/v1";
+
+/// OpenAI chat completions provider (also works with Codex).
+pub struct OpenAIProvider {
+    model: String,
+    max_tokens: u32,
+    base_url: String,
+    api_key: String,
+    thinking: ThinkingLevel,
+}
+
+impl OpenAIProvider {
+    /// Create from model name and API key.
+    pub fn new(model: &str, api_key: &str) -> Self {
+        Self {
+            model: model.to_owned(),
+            max_tokens: 8192,
+            base_url: BASE_URL.to_owned(),
+            api_key: api_key.to_owned(),
+            thinking: ThinkingLevel::Low,
+        }
+    }
+
+}
+
+impl Provider for OpenAIProvider {
+    fn name(&self) -> &str { "openai" }
+    fn thinking(&self) -> ThinkingLevel { self.thinking }
+    fn set_thinking(&mut self, level: ThinkingLevel) { self.thinking = level; }
+
+    fn stream<'a>(
+        &'a self,
+        messages: &'a [Message],
+        tools: &'a [ToolSchema],
+        tx: mpsc::Sender<Event>,
+        cancel: CancellationToken,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(Message, Usage)>> + Send + 'a>> {
+        Box::pin(async move {
+        let api_messages = to_api_messages(messages);
+        let api_tools = to_api_tools(tools);
+
+        let mut body = serde_json::json!({
+            "model": self.model,
+            "max_tokens": self.max_tokens,
+            "messages": api_messages,
+            "stream": true,
+        });
+
+        if !api_tools.is_empty() {
+            body["tools"] = api_tools.into();
+        }
+
+        let budget = self.thinking.budget();
+        if budget > 0 {
+            body["thinking"] = serde_json::json!({"type": "enabled", "budget_tokens": budget});
+        }
+
+        let auth_header = format!("Bearer {}", self.api_key);
+        let headers = [("Authorization", auth_header.as_str())];
+
+        let mut text = String::new();
+        let mut tool_map: HashMap<u64, (String, String, String)> = HashMap::new();
+        let mut usage = Usage::default();
+
+        let tx_ref = &tx;
+        let usage_ref = &mut usage;
+        post_sse(
+            &format!("{}/chat/completions", self.base_url),
+            &headers,
+            &body,
+            &cancel,
+            |event: SseEvent| {
+                let delta = &event.data["choices"][0]["delta"];
+                if delta.is_null() { return; }
+
+                if let Some(t) = delta["reasoning_content"].as_str()
+                    && !t.is_empty()
+                {
+                    let _ = tx_ref.try_send(Event::Thinking(t.to_owned()));
+                }
+
+                if let Some(t) = delta["content"].as_str()
+                    && !t.is_empty()
+                {
+                    text.push_str(t);
+                    let _ = tx_ref.try_send(Event::Token(t.to_owned()));
+                }
+
+                if let Some(tcs) = delta["tool_calls"].as_array() {
+                    for tc in tcs {
+                        let idx = tc["index"].as_u64().unwrap_or(0);
+                        let entry = tool_map.entry(idx).or_insert_with(|| (String::new(), String::new(), String::new()));
+                        if let Some(id) = tc["id"].as_str() { entry.0 = id.to_owned(); }
+                        if let Some(name) = tc["function"]["name"].as_str() { entry.1 = name.to_owned(); }
+                        if let Some(args) = tc["function"]["arguments"].as_str() { entry.2.push_str(args); }
+                    }
+                }
+
+                if let Some(u) = event.data["usage"].as_object() {
+                    let cached = u.get("prompt_tokens_details")
+                        .and_then(|d| d.get("cached_tokens"))
+                        .and_then(|v| v.as_u64());
+                    let u_data = Usage {
+                        input_tokens: u.get("prompt_tokens").and_then(|v| v.as_u64()).unwrap_or(0),
+                        output_tokens: u.get("completion_tokens").and_then(|v| v.as_u64()).unwrap_or(0),
+                        cache_read: cached,
+                        cache_write: None,
+                    };
+                    *usage_ref = u_data.clone();
+                    let _ = tx_ref.try_send(Event::Usage(u_data));
+                }
+            },
+        ).await?;
+
+        let tool_calls: Vec<ToolCall> = tool_map.into_values().map(|(id, name, args)| {
+            ToolCall {
+                id,
+                r#type: "function".into(),
+                function: ToolCallFunction { name, arguments: args },
+            }
+        }).collect();
+
+        Ok((Message {
+            role: Role::Assistant,
+            content: text,
+            tool_call_id: None,
+            tool_calls: if tool_calls.is_empty() { None } else { Some(tool_calls) },
+        }, usage))
+    })
+    }
+}
+
+fn to_api_messages(messages: &[Message]) -> Vec<serde_json::Value> {
+    messages.iter().map(|msg| {
+        match msg.role {
+            Role::System => serde_json::json!({"role": "system", "content": msg.content}),
+            Role::User => serde_json::json!({"role": "user", "content": msg.content}),
+            Role::Assistant => {
+                let mut v = serde_json::json!({"role": "assistant", "content": msg.content});
+                if let Some(tcs) = &msg.tool_calls {
+                    let api_tcs: Vec<_> = tcs.iter().map(|tc| serde_json::json!({
+                        "id": tc.id, "type": "function",
+                        "function": {"name": tc.function.name, "arguments": tc.function.arguments}
+                    })).collect();
+                    v["tool_calls"] = api_tcs.into();
+                }
+                v
+            }
+            Role::Tool => serde_json::json!({
+                "role": "tool",
+                "content": msg.content,
+                "tool_call_id": msg.tool_call_id.as_deref().unwrap_or("")
+            }),
+        }
+    }).collect()
+}
+
+fn to_api_tools(tools: &[ToolSchema]) -> Vec<serde_json::Value> {
+    tools.iter().map(|t| serde_json::json!({
+        "type": "function",
+        "function": {
+            "name": t.name,
+            "description": t.description,
+            "parameters": t.parameters,
+        }
+    })).collect()
+}
