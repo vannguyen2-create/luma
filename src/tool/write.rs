@@ -18,13 +18,10 @@ impl Tool for WriteTool {
         ToolSchema {
             name: "write".into(),
             description: concat!(
-                "Write content to a file. Creates parent directories if needed.\n",
-                "Usage:\n",
-                "- This tool will overwrite the existing file\n",
-                "- If this is an existing file, you MUST read it first with the read tool\n",
-                "- Prefer the edit tool for modifying existing files — it only sends the diff\n",
-                "- Only use write to create new files or for complete rewrites\n",
-                "- NEVER create documentation files (*.md) or README files unless explicitly requested",
+                "Create a new file or overwrite an existing file. Creates parent directories if needed.\n",
+                "- For modifying existing files, prefer the `edit` tool — it only sends the diff.\n",
+                "- Only use write for new files or complete rewrites of small files.\n",
+                "- NEVER create documentation files (*.md) or README files unless explicitly requested.",
             ).into(),
             parameters: serde_json::json!({
                 "type": "object",

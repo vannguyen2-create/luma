@@ -21,14 +21,13 @@ impl Tool for ReadTool {
         ToolSchema {
             name: "read".into(),
             description: concat!(
-                "Read a file or list a directory. Returns content with line numbers.\n",
-                "Usage:\n",
-                "- The path parameter must be an absolute path, not a relative path\n",
-                "- By default, reads up to 2000 lines from the beginning of the file\n",
-                "- You can optionally specify offset (1-indexed line) and limit for large files\n",
-                "- Results are returned with line numbers (e.g. '1: content')\n",
-                "- For directories, returns entries with trailing / for subdirectories\n",
-                "- If a file does not exist, an error is returned",
+                "Read a file or list a directory. Returns content with line numbers (e.g. '1: content').\n",
+                "- Path must be absolute.\n",
+                "- Default reads up to 2000 lines. Use offset/limit for large files.\n",
+                "- Avoid tiny repeated slices (e.g. 30-line chunks). Read a larger window instead.\n",
+                "- Call in parallel for multiple files you need to read.\n",
+                "- For directories, returns entries with trailing / for subdirectories.\n",
+                "- Not for searching — use `grep` for content search, `glob` for file search.",
             ).into(),
             parameters: serde_json::json!({
                 "type": "object",

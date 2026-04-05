@@ -19,11 +19,9 @@ impl Tool for GlobTool {
         ToolSchema {
             name: self.name().to_owned(),
             description: concat!(
-                "Fast file pattern matching tool that works with any codebase size.\n",
-                "- Supports glob patterns like \"**/*.rs\" or \"src/**/*.ts\"\n",
-                "- Returns matching file paths sorted by modification time (newest first)\n",
-                "- Use this tool when you need to find files by name patterns\n",
-                "- For searching file contents, use the grep tool instead",
+                "Find files by name pattern. Returns paths sorted by modification time (newest first).\n",
+                "- Patterns: **/*.rs, src/**/*.{ts,tsx}, *test*, src/[a-z]*/*.ts\n",
+                "- Not for searching file contents — use `grep` instead.",
             ).to_owned(),
             parameters: serde_json::json!({
                 "type": "object",

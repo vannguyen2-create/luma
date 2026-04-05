@@ -20,13 +20,11 @@ impl Tool for GrepTool {
         ToolSchema {
             name: self.name().to_owned(),
             description: concat!(
-                "Fast content search tool that works with any codebase size.\n",
-                "- Searches file contents using regular expressions\n",
-                "- Supports full regex syntax (e.g. \"log.*Error\", \"function\\s+\\w+\")\n",
-                "- Filter files by glob pattern with the include parameter (e.g. \"*.rs\", \"*.{ts,tsx}\")\n",
-                "- Returns file paths with line numbers and matching content\n",
-                "- Results sorted by modification time (newest first)\n",
-                "- Use this tool for searching file contents. Use glob for finding files by name.",
+                "Search file contents using regex. Returns file paths with line numbers and matching lines.\n",
+                "- Regex syntax: \"log.*Error\", \"fn\\s+\\w+\", \"TODO|FIXME\"\n",
+                "- Filter by file type with include param: \"*.rs\", \"*.{ts,tsx}\"\n",
+                "- Results sorted by modification time (newest first).\n",
+                "- Not for finding files by name — use `glob` instead.",
             ).to_owned(),
             parameters: serde_json::json!({
                 "type": "object",

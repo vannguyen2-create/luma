@@ -20,20 +20,18 @@ impl Tool for EditTool {
         ToolSchema {
             name: "edit".into(),
             description: concat!(
-                "Performs exact string replacements in files.\n",
-                "Usage:\n",
-                "- You must read the file first before editing (use the read tool)\n",
-                "- Preserve exact indentation from the file when specifying old_string\n",
-                "- The edit will FAIL if old_string is not found in the file\n",
-                "- The edit will FAIL if old_string matches multiple locations. Provide more context or set replace_all=true\n",
-                "- Use replace_all for renaming variables/strings across the file\n",
-                "- To create a new file, set old_string to empty and new_string to the file content\n",
-                "- ALWAYS prefer editing over writing entire files",
+                "Performs exact string replacement in an existing file.\n",
+                "- You MUST read the file before editing. Never edit code you haven't seen.\n",
+                "- old_string must match exactly one location, or set replace_all=true.\n",
+                "- old_string and new_string must be different.\n",
+                "- Preserve exact indentation from the file when specifying old_string.\n",
+                "- Use replace_all for renaming variables/strings across the file.\n",
+                "- To create new files, use the `write` tool instead.",
             ).into(),
             parameters: serde_json::json!({
                 "type": "object",
                 "properties": {
-                    "path": { "type": "string", "description": "Path to edit" },
+                    "path": { "type": "string", "description": "Absolute path to the file. ALWAYS generate this argument first." },
                     "old_string": { "type": "string", "description": "Exact string to find" },
                     "new_string": { "type": "string", "description": "Replacement string" },
                     "replace_all": { "type": "boolean", "description": "Replace all occurrences" }
