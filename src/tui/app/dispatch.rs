@@ -169,7 +169,6 @@ impl super::App {
                     match self.config.picker_mode {
                         PickerMode::Model => self.select_model(&id),
                         PickerMode::Session => self.resume_session(&id),
-                        PickerMode::Mode => self.select_mode(&id),
                     }
                     return Action::Render;
                 }

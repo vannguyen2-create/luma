@@ -21,17 +21,6 @@ impl super::App {
                 self.ui.status.reset_cache();
                 Action::Render
             }
-            "mode" => {
-                self.config.picker_mode = PickerMode::Mode;
-                let current = self.config.mode.as_str();
-                let items = vec![
-                    "rush — fast, lightweight".to_owned(),
-                    "smart — balanced, Claude Sonnet".to_owned(),
-                    "deep — thorough, Codex".to_owned(),
-                ];
-                self.ui.picker.open(items, current);
-                Action::Render
-            }
             "model" => {
                 let all = models::all_models();
                 if all.is_empty() {
@@ -100,17 +89,6 @@ impl super::App {
         }
     }
 
-    /// Select a mode from the picker.
-    pub(super) fn select_mode(&mut self, picker_id: &str) {
-        let mode_str = picker_id.split(" — ").next().unwrap_or("").trim();
-        let mode = match mode_str {
-            "rush" => AgentMode::Rush,
-            "smart" => AgentMode::Smart,
-            "deep" => AgentMode::Deep,
-            _ => return,
-        };
-        self.apply_mode(mode);
-    }
     /// Tab cycle all 3 modes.
     pub(super) fn quick_cycle_mode(&mut self) {
         self.apply_mode(self.config.mode.next());

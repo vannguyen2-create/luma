@@ -30,7 +30,6 @@ pub enum DragState {
 pub enum PickerMode {
     Model,
     Session,
-    Mode,
 }
 
 /// Agent-facing configuration: mode, model, thinking, env context.
