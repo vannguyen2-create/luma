@@ -63,25 +63,23 @@ impl super::App {
                     Action::Continue
                 }
             }
+            // Streaming events: buffer only, render on next Tick (~80ms).
+            // Rendering on every token causes stdout flush storms that can
+            // deadlock the entire process when the terminal can't keep up.
             Event::Token(t) => {
                 crate::dbg_log!("token: {}B", t.len());
                 self.ui.output.append_token(&t);
-                Action::Render
+                Action::Continue
             }
             Event::Thinking(t) => {
                 crate::dbg_log!("thinking: {}B", t.len());
                 self.ui.output.append_thinking(&t);
-                Action::Render
-            }
-            Event::ToolStart { name, summary } => {
-                crate::dbg_log!("tool_start {name} {summary}");
-                self.ui.output.tool_start(&name, &summary);
-                Action::Render
+                Action::Continue
             }
             Event::ToolInput { name, chunk } => {
                 crate::dbg_log!("tool_input {name}: {}B", chunk.len());
                 self.ui.output.tool_input(&name, &chunk);
-                Action::Render
+                Action::Continue
             }
             Event::ToolOutput { name, chunk } => {
                 crate::dbg_log!(
@@ -89,6 +87,12 @@ impl super::App {
                     chunk.chars().take(60).collect::<String>()
                 );
                 self.ui.output.tool_output(&name, &chunk);
+                Action::Continue
+            }
+            // Structural events: render immediately (infrequent, 1 per tool call).
+            Event::ToolStart { name, summary } => {
+                crate::dbg_log!("tool_start {name} {summary}");
+                self.ui.output.tool_start(&name, &summary);
                 Action::Render
             }
             Event::ToolEnd { name, summary } => {
@@ -109,11 +113,12 @@ impl super::App {
                     usage.cache_read.unwrap_or(0),
                     usage.cache_write.unwrap_or(0),
                 );
-                // Total context = all input (uncached + cached) + output
-                let input_total = usage.input_tokens
+                // Total context = uncached input + cached (read+write) + output.
+                // Anthropic: input_tokens = uncached only, cache tokens are additional.
+                let total = usage.input_tokens
                     + usage.cache_read.unwrap_or(0)
-                    + usage.cache_write.unwrap_or(0);
-                let total = input_total + usage.output_tokens;
+                    + usage.cache_write.unwrap_or(0)
+                    + usage.output_tokens;
                 let ctx_window = self
                     .config
                     .model
