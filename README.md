@@ -2,7 +2,7 @@
 
 > Lightweight coding agent built with Rust. Uses Anthropic Claude and OpenAI Codex as backends.
 
-![demo](demo.gif?v=2)
+![demo](demo.gif)
 
 ## Features
 
