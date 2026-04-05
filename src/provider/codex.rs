@@ -64,7 +64,9 @@ impl Provider for CodexProvider {
             body["prompt_cache_key"] = serde_json::json!(key);
         }
 
-        let client = reqwest::Client::new();
+        let client = reqwest::Client::builder()
+            .connect_timeout(std::time::Duration::from_secs(30))
+            .build()?;
         let mut req = client.post(CODEX_ENDPOINT)
             .header("Content-Type", "application/json")
             .header("Authorization", format!("Bearer {}", self.api_key))
@@ -90,11 +92,13 @@ impl Provider for CodexProvider {
         let mut buf = String::new();
         let mut usage = Usage::default();
         let mut response = response;
+        let chunk_timeout = std::time::Duration::from_secs(120);
 
         loop {
             let chunk = tokio::select! {
                 c = response.chunk() => c?,
                 _ = cancel.cancelled() => { bail!("Aborted"); }
+                _ = tokio::time::sleep(chunk_timeout) => { bail!("SSE stream timeout — no data for 120s"); }
             };
             let Some(chunk) = chunk else { break };
             buf.push_str(&String::from_utf8_lossy(&chunk));

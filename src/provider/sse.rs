@@ -17,7 +17,9 @@ pub async fn post_sse(
     cancel: &CancellationToken,
     mut on_event: impl FnMut(SseEvent),
 ) -> Result<()> {
-    let client = reqwest::Client::new();
+    let client = reqwest::Client::builder()
+        .connect_timeout(std::time::Duration::from_secs(30))
+        .build()?;
     let mut req = client.post(url)
         .header("Content-Type", "application/json")
         .json(body);
@@ -45,11 +47,14 @@ pub async fn post_sse(
     let mut buf = String::new();
     let mut current_event = String::new();
     let mut response = response;
+    // Timeout between chunks — if server stops sending data for 120s, bail.
+    let chunk_timeout = std::time::Duration::from_secs(120);
 
     loop {
         let chunk = tokio::select! {
             c = response.chunk() => c?,
             _ = cancel.cancelled() => { bail!("Aborted"); }
+            _ = tokio::time::sleep(chunk_timeout) => { bail!("SSE stream timeout — no data for 120s"); }
         };
         let Some(chunk) = chunk else { break; };
         buf.push_str(&String::from_utf8_lossy(&chunk));
