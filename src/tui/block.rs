@@ -133,7 +133,7 @@ pub fn render_block(block: &Block, width: usize, spinner_frame: usize) -> Vec<Li
         }
         Block::Logo(label) => {
             let label_w = crate::tui::text::display_width(label);
-            let pad = width.saturating_sub(label_w) / 3;
+            let pad = width.saturating_sub(label_w) * 2 / 5;
             let mut line = Line::new(smallvec![Span::new(label.clone(), palette::MUTED)]);
             line.indent = pad as u16;
             vec![line]

@@ -20,7 +20,17 @@
 - `.agents/skills/` and `.claude/skills/` (project-level, higher priority)
 - `~/.agents/skills/`, `~/.claude/skills/`, `~/.config/luma/skills/` (user-level)
 
-**Zero-config auth** — reuses credentials from Claude Code (macOS Keychain or `~/.claude/.credentials.json`) and Codex CLI (`~/.codex/auth.json`). OAuth tokens auto-refresh.
+**Zero-config auth** — reuses credentials from Claude Code and Codex CLI.
+
+## Memory Usage
+
+Measured at idle state on macOS (Apple Silicon):
+
+| App | RAM (RSS) | Stack |
+|-----|-----------|-------|
+| **luma** | **12.8 MB** | 1 process, Rust |
+| codex | 64.5 MB | 4 processes, Node + native |
+| claude code | 207.6 MB | 2 processes, Node.js |
 
 ## Install
 

@@ -134,7 +134,6 @@ impl App {
         );
         let mut prompt = PromptState::new();
         prompt.add_command("new", "new thread");
-        prompt.add_command("mode", "switch mode");
         prompt.add_command("model", "switch model");
         prompt.add_command("sessions", "browse sessions");
         prompt.add_command("exit", "quit luma");
@@ -202,7 +201,13 @@ impl App {
         if self.config.model.is_none() {
             self.ui.output.warn("no model — run 'luma sync'");
         }
-        self.ui.output.divider();
+        // Vertical centering: pad so logo sits in the middle of the output area
+        let logo_height = LOGO.len() + 2; // +2 for dividers
+        let output_h = self.layout.output.content_height() as usize;
+        let top_pad = output_h.saturating_sub(logo_height) / 2;
+        for _ in 0..top_pad {
+            self.ui.output.divider();
+        }
         self.ui.output.logo(LOGO);
         self.ui.output.divider();
 
