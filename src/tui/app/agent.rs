@@ -56,9 +56,11 @@ impl super::App {
         let skills = crate::config::skills::discover();
         let skill_catalog = crate::config::skills::build_catalog(&skills);
         let project_instructions = crate::config::instructions::discover();
-        let instructions_block = crate::config::instructions::build_instructions(&project_instructions);
+        let instructions_block =
+            crate::config::instructions::build_instructions(&project_instructions);
+        let base_prompt = crate::config::prompt::build(&model.source, self.config.mode);
         let system_prompt = format!(
-            "You are a helpful coding assistant.\n{}{skill_catalog}{instructions_block}",
+            "{base_prompt}\n{}{skill_catalog}{instructions_block}",
             self.config.env_context
         );
 
