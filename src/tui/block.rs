@@ -21,7 +21,8 @@ fn tool_icon(name: &str) -> &'static str {
 pub enum Block {
     Gap,
     GapLabel(String),
-    Logo(String),
+    /// (lines, precomputed max display width)
+    Logo(Vec<String>, usize),
     Info(String),
     #[allow(dead_code)]
     Success(String),
@@ -131,12 +132,16 @@ pub fn render_block(block: &Block, width: usize, spinner_frame: usize) -> Vec<Li
         Block::GapLabel(label) => {
             vec![Line::new(smallvec![Span::new(label.clone(), palette::MUTED)])]
         }
-        Block::Logo(label) => {
-            let label_w = crate::tui::text::display_width(label);
-            let pad = width.saturating_sub(label_w) * 2 / 5;
-            let mut line = Line::new(smallvec![Span::new(label.clone(), palette::MUTED)]);
-            line.indent = pad as u16;
-            vec![line]
+        Block::Logo(lines, max_w) => {
+            let pad = (width.saturating_sub(*max_w) * 2 / 5) as u16;
+            lines
+                .iter()
+                .map(|l| {
+                    let mut line = Line::new(smallvec![Span::new(l.clone(), palette::MUTED)]);
+                    line.indent = pad;
+                    line
+                })
+                .collect()
         }
 
         Block::Info(t) => wrap_simple(icon::INFO, palette::DIM, t, width),

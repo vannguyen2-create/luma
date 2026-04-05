@@ -153,9 +153,13 @@ impl OutputLog {
     /// Add centered logo lines.
     pub fn logo(&mut self, lines: &[&str]) {
         self.commit_last();
-        for line in lines {
-            self.push(Block::Logo(line.to_string()));
-        }
+        let owned: Vec<String> = lines.iter().map(|l| l.to_string()).collect();
+        let max_w = owned
+            .iter()
+            .map(|l| crate::tui::text::display_width(l))
+            .max()
+            .unwrap_or(0);
+        self.push(Block::Logo(owned, max_w));
         self.has_logo = true;
     }
 
