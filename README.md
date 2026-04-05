@@ -55,26 +55,6 @@ luma help         # show help
 
 First run calls `luma sync` automatically.
 
-### TUI commands
-
-| Command | Description |
-|---------|-------------|
-| `/new` | New conversation thread |
-| `/mode` | Pick mode (Rush / Smart / Deep) |
-| `/model` | Pick specific model |
-| `/sessions` | Resume a saved session |
-| `/exit` | Quit |
-
-### Keyboard shortcuts
-
-| Key | Action |
-|-----|--------|
-| `Tab` | Cycle mode (Rush → Smart → Deep) |
-| `Ctrl+T` | Cycle thinking level (Off → Low → Medium → High) |
-| `Esc` | Cancel / close picker |
-| `Alt+Enter` | Newline in input |
-| `Ctrl+C` | Exit |
-
 ## Configuration
 
 Preferences are stored in `~/.config/luma/preferences.json` (mode, model per mode, thinking level). Changed automatically through TUI — no manual editing needed.
@@ -89,19 +69,7 @@ luma
 
 ## Authentication
 
-LUMA does not have its own login. It reads existing credentials:
-
-| Provider | Source | Priority |
-|----------|--------|----------|
-| Anthropic | macOS Keychain (`Claude Code-credentials`) | 1st |
-| Anthropic | `~/.claude/.credentials.json` | 2nd |
-| OpenAI | `~/.codex/auth.json` | — |
-
-If credentials are missing, install and log in through the official tools:
-- [Claude Code](https://github.com/anthropics/claude-code)
-- [Codex CLI](https://github.com/openai/codex)
-
-Cached tokens are stored in `~/.config/luma/auth.json` and refreshed automatically when expired.
+Reuses credentials from [Claude Code](https://github.com/anthropics/claude-code) and [Codex CLI](https://github.com/openai/codex). No separate login needed.
 
 ## Development
 
