@@ -30,12 +30,24 @@ impl Viewport {
     }
 
     /// Add a pre-rendered block.
+    #[allow(dead_code)]
     pub fn push(&mut self, lines: Vec<Line>) {
         self.offsets.push(self.total);
         self.total += lines.len();
         self.blocks.push(CachedBlock {
             lines,
             is_dirty: false,
+        });
+    }
+
+    /// Add a deferred block (not yet rendered). Marked dirty so refresh()
+    /// will render it when needed. Uses estimated height of 1 line.
+    pub fn push_deferred(&mut self) {
+        self.offsets.push(self.total);
+        self.total += 1; // estimate 1 line; corrected on first render
+        self.blocks.push(CachedBlock {
+            lines: vec![],
+            is_dirty: true,
         });
     }
 
@@ -62,12 +74,45 @@ impl Viewport {
     }
 
     /// Re-render dirty blocks from source data, rebuild offsets.
-    pub fn refresh(&mut self, source: &mut [Block], width: usize, spinner: usize) {
+    /// Only renders blocks that are visible (within scroll window) or
+    /// near-visible (1 screen buffer). Deferred blocks outside the
+    /// visible range stay unrendered until scrolled into view.
+    pub fn refresh(
+        &mut self,
+        source: &mut [Block],
+        width: usize,
+        spinner: usize,
+        scroll_offset: usize,
+        view_height: usize,
+    ) {
+        // Determine visible block range with buffer
+        let visible_end = scroll_offset + view_height * 2;
+        let vis_start = if self.blocks.is_empty() {
+            0
+        } else {
+            self.block_at(scroll_offset.min(self.total.saturating_sub(1)))
+        };
+        let vis_end = if self.total == 0 {
+            0
+        } else {
+            self.block_at(visible_end.min(self.total.saturating_sub(1))) + 1
+        };
+
         let mut any_changed = false;
         for (i, cached) in self.blocks.iter_mut().enumerate() {
-            if cached.is_dirty
-                && let Some(block) = source.get_mut(i)
-            {
+            if !cached.is_dirty {
+                continue;
+            }
+            // Always render visible blocks. Skip far-off deferred blocks.
+            let in_range = i >= vis_start && i < vis_end;
+            // Blocks that were previously rendered (have content) should
+            // always refresh (e.g. spinner updates for pending tools).
+            let was_rendered = !cached.lines.is_empty();
+            if !in_range && !was_rendered {
+                continue;
+            }
+
+            if let Some(block) = source.get_mut(i) {
                 cached.lines = render_block_mut(block, width, spinner);
                 cached.is_dirty = false;
                 any_changed = true;
@@ -146,11 +191,7 @@ impl Viewport {
     }
 
     /// Iterate lines in a window — for Renderer direct paint.
-    pub fn window_iter(
-        &self,
-        offset: usize,
-        height: usize,
-    ) -> ViewportIter<'_> {
+    pub fn window_iter(&self, offset: usize, height: usize) -> ViewportIter<'_> {
         let end = (offset + height).min(self.total);
         if offset >= end || self.blocks.is_empty() {
             return ViewportIter {

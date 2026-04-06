@@ -7,7 +7,7 @@
 /// All scroll/query methods use `cached_total` (updated by prepare_frame).
 /// This avoids O(n²) re-renders when pushing many blocks (session load)
 /// and eliminates ensure_fresh from scroll event handlers.
-use crate::tui::block::{render_block, Block, SkillBlock, TextBlock, ToolBlock};
+use crate::tui::block::{Block, SkillBlock, TextBlock, ToolBlock};
 use crate::tui::stream::StreamBuf;
 use crate::tui::scroll::ScrollView;
 use crate::tui::text::Line;
@@ -53,8 +53,13 @@ impl OutputLog {
     /// Reconcile all state for this frame. Must be called exactly once
     /// at the start of each render, before any visible_lines/scroll_info.
     pub fn prepare_frame(&mut self) {
-        self.cache
-            .refresh(&mut self.blocks, self.width, self.spinner_frame);
+        self.cache.refresh(
+            &mut self.blocks,
+            self.width,
+            self.spinner_frame,
+            self.scroll.offset,
+            self.height,
+        );
         self.cached_total = self.cache.total_lines();
         self.scroll.auto_scroll(self.cached_total, self.height);
         self.scroll.clamp(self.cached_total, self.height);
@@ -436,12 +441,11 @@ impl OutputLog {
     // ════════════════════════════════════════════════════════════════
 
     fn push(&mut self, block: Block) {
-        let rendered = render_block(&block, self.width, self.spinner_frame);
         self.blocks.push(block);
-        self.cache.push(rendered);
-        // No auto_scroll / ensure_fresh here.
-        // prepare_frame() handles scroll reconciliation once per frame.
-        // This keeps batch pushes (session load) O(n) instead of O(n²).
+        // Defer rendering: push empty placeholder, mark dirty.
+        // Actual render happens in prepare_frame() → refresh() only for
+        // visible or dirty blocks. Keeps batch pushes (session load) fast.
+        self.cache.push_deferred();
     }
 
     fn feed_last(&mut self, token: &str) {
