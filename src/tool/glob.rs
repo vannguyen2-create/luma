@@ -128,13 +128,20 @@ impl Tool for GlobTool {
 mod tests {
     use super::*;
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn glob_finds_rust_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        std::fs::create_dir_all(root.join("src")).unwrap();
+        std::fs::write(root.join("src/main.rs"), "fn main() {}\n").unwrap();
+        std::fs::write(root.join("readme.md"), "# hi\n").unwrap();
+
         let (tx, _rx) = mpsc::channel(64);
         let tool = GlobTool;
-        let args = serde_json::json!({"pattern": "**/*.rs", "path": "src"});
+        let args = serde_json::json!({"pattern": "**/*.rs", "path": root.to_str().unwrap()});
         let result = tool.execute(args, tx, CancellationToken::new()).await.unwrap();
         assert!(result.contains(".rs"));
+        assert!(!result.contains("readme.md"));
     }
 
     #[tokio::test]

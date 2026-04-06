@@ -21,7 +21,6 @@ pub struct Message {
     pub tool_calls: Option<Vec<ToolCall>>,
 }
 
-#[allow(dead_code)]
 impl Message {
     /// Concatenate all text blocks into a single string.
     pub fn text(&self) -> String {
@@ -63,7 +62,7 @@ impl Message {
     }
 
     /// Create a text-only message.
-    pub fn text_msg(role: Role, text: impl Into<String>) -> Self {
+    fn text_msg(role: Role, text: impl Into<String>) -> Self {
         Self {
             role,
             content: vec![ContentBlock::Text { text: text.into() }],
@@ -73,6 +72,7 @@ impl Message {
     }
 
     /// Create a user message from text.
+    #[cfg(test)]
     pub fn user(text: impl Into<String>) -> Self {
         Self::text_msg(Role::User, text)
     }

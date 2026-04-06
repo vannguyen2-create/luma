@@ -95,13 +95,6 @@ impl Session {
         let content = fs::read_to_string(path).ok()?;
         serde_json::from_str(&content).ok()
     }
-
-    /// Delete from disk.
-    #[allow(dead_code)]
-    pub fn delete(id: &str) {
-        let path = sessions_dir().join(format!("{id}.json"));
-        let _ = fs::remove_file(path);
-    }
 }
 
 /// List all sessions sorted by updated_at (newest first).

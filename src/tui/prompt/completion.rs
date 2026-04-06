@@ -84,13 +84,6 @@ impl Completion {
         self.file_cache_valid = true;
     }
 
-    /// Invalidate file cache (e.g. after a tool modifies files).
-    #[allow(dead_code)]
-    pub fn invalidate(&mut self) {
-        self.file_cache_valid = false;
-        self.file_cache.clear();
-    }
-
     /// Get matching commands for a query.
     pub fn command_matches(&self, query: &str) -> Vec<&Command> {
         let q = query.to_lowercase();
