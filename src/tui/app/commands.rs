@@ -120,8 +120,7 @@ impl super::App {
         self.ensure_agent_loop();
         if let Some(tx) = &self.agent.tx {
             let _ = tx.try_send(AgentCommand::LoadSession {
-                messages: session.messages.clone(),
-                usage: session.usage.clone(),
+                session: session.clone(),
             });
         }
         self.ui.output.clear();

@@ -78,18 +78,21 @@ async fn agent_loop(
                 .await;
 
                 // Fix orphaned tool_use blocks left by aborted/errored turns.
-                // Claude API requires every tool_use to have a matching tool_result
-                // immediately after. When a turn is cancelled mid-tool-execution,
-                // assistant messages with tool_calls may lack their tool_results.
                 fix_orphaned_tool_uses(&mut session.messages);
 
                 session.turn_durations.push(turn_start.elapsed().as_secs_f64());
+                // Save after every turn — crash recovery preserves progress.
                 session.save();
                 crate::config::prefs::save_last_session(&session.id);
 
                 match result {
                     Ok(_) => { let _ = event_tx.send(Event::AgentDone).await; }
-                    Err(e) => { let _ = event_tx.send(Event::AgentError(e.to_string())).await; }
+                    Err(e) => {
+                        // Save on error — preserves progress before crash/abort.
+                        fix_orphaned_tool_uses(&mut session.messages);
+                        session.save();
+                        let _ = event_tx.send(Event::AgentError(e.to_string())).await;
+                    }
                 }
             }
             AgentCommand::Reset => {
@@ -104,11 +107,20 @@ async fn agent_loop(
                     });
                 }
             }
-            AgentCommand::LoadSession { messages, usage } => {
+            AgentCommand::LoadSession { session: loaded } => {
                 session.save();
-                session = Session::new();
-                session.messages = messages;
-                session.usage = usage;
+                session = loaded;
+                // Re-inject system prompt if missing
+                if !config.system_prompt.is_empty()
+                    && !session.messages.first().is_some_and(|m| m.role == Role::System)
+                {
+                    session.messages.insert(0, Message {
+                        role: Role::System,
+                        content: config.system_prompt.clone(),
+                        tool_call_id: None,
+                        tool_calls: None,
+                    });
+                }
             }
             AgentCommand::SetModel { model_id, source } => {
                 config.model_id = model_id;

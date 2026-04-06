@@ -176,6 +176,13 @@ impl OutputLog {
         }));
     }
 
+    /// Add a success message.
+    #[allow(dead_code)]
+    pub fn success(&mut self, text: &str) {
+        self.commit_last();
+        self.push(Block::Success(text.to_owned()));
+    }
+
     /// Add an error message.
     pub fn error(&mut self, text: &str) {
         self.commit_last();

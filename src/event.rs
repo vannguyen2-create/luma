@@ -128,10 +128,9 @@ pub enum AgentCommand {
     SetModel { model_id: String, source: String },
     /// Update thinking level on current provider.
     SetThinking(crate::core::types::ThinkingLevel),
-    /// Load a saved session (replace current messages and usage).
+    /// Load a saved session (replace current messages, usage, and session ID).
     LoadSession {
-        messages: Vec<crate::core::types::Message>,
-        usage: crate::core::session::SessionUsage,
+        session: crate::core::session::Session,
     },
     /// Shut down the agent loop.
     Shutdown,
