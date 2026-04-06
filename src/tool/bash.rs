@@ -1,6 +1,7 @@
 /// Bash tool — execute shell commands with streaming output and timeout.
 use crate::core::tool::Tool;
 use crate::core::types::ToolSchema;
+use crate::tool::bash_safety;
 use anyhow::{bail, Result};
 use std::pin::Pin;
 use std::future::Future;
@@ -13,21 +14,13 @@ const HEAD_BYTES: usize = 8_000;  // keep first 8K
 const TAIL_BYTES: usize = 20_000; // keep last 20K — errors/results are at the end
 const DEFAULT_TIMEOUT_MS: u64 = 30_000;
 
-/// Dangerous command patterns — checked as substrings.
-const DANGEROUS_SUBSTR: &[&str] = &[
-    "rm -rf /", "rm --no-preserve-root",
-    "git push --force", "git reset --hard",
-];
-
-/// Dangerous base commands — matched only at command position
-/// (start of string or after `&&`, `||`, `;`, `|`).
-const DANGEROUS_CMDS: &[&str] = &["mkfs", "dd"];
-
 /// Execute shell commands with streaming output.
 pub struct BashTool { name: &'static str }
 
 impl BashTool {
+    /// Create a BashTool with Claude-style naming.
     pub fn claude() -> Self { Self { name: "Bash" } }
+    /// Create a BashTool with Codex-style naming.
     pub fn codex() -> Self { Self { name: "exec_command" } }
 }
 
@@ -75,14 +68,13 @@ impl Tool for BashTool {
             let command = args.get("command").and_then(|v| v.as_str()).unwrap_or("");
             if command.is_empty() { bail!("missing command argument"); }
 
-            let timeout_ms = args.get("timeout").and_then(|v| v.as_u64()).unwrap_or(DEFAULT_TIMEOUT_MS);
+            let timeout_ms = args.get("timeout")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(DEFAULT_TIMEOUT_MS);
 
-            for pattern in DANGEROUS_SUBSTR {
-                if command.contains(pattern) {
-                    bail!("blocked dangerous command — {command}");
-                }
-            }
-            if is_dangerous_cmd(command) {
+            if bash_safety::contains_dangerous_substr(command)
+                || bash_safety::is_dangerous_cmd(command)
+            {
                 bail!("blocked dangerous command — {command}");
             }
 
@@ -96,68 +88,9 @@ impl Tool for BashTool {
             let mut stdout = child.stdout.take().expect("stdout piped");
             let mut stderr = child.stderr.take().expect("stderr piped");
 
-            // Read stdout + stderr interleaved with cancel/deadline support.
-            // Keeps head + tail of output so errors at the end are preserved.
-            let (output, exit_code) = {
-                let mut out = String::new();
-                let mut total_bytes = 0usize;
-                let mut tail = String::new();
-                let mut truncated = false;
-                let mut buf = [0u8; 4096];
-                let mut stderr_buf = [0u8; 4096];
-                let mut aborted = false;
-                let mut timed_out = false;
-                let mut stdout_done = false;
-                let mut stderr_done = false;
-                let deadline = tokio::time::Instant::now()
-                    + std::time::Duration::from_millis(timeout_ms);
-
-                loop {
-                    if stdout_done && stderr_done {
-                        break;
-                    }
-                    tokio::select! {
-                        biased;
-                        _ = cancel.cancelled() => { aborted = true; break; }
-                        _ = tokio::time::sleep_until(deadline) => { timed_out = true; break; }
-                        n = stdout.read(&mut buf), if !stdout_done => {
-                            let n = n?;
-                            if n == 0 { stdout_done = true; continue; }
-                            let chunk = String::from_utf8_lossy(&buf[..n]).to_string();
-                            total_bytes += n;
-                            let _ = output_tx.send(chunk.clone()).await;
-                            accumulate(&mut out, &mut tail, &mut truncated, &chunk);
-                        }
-                        n = stderr.read(&mut stderr_buf), if !stderr_done => {
-                            let n = n?;
-                            if n == 0 { stderr_done = true; continue; }
-                            let chunk = String::from_utf8_lossy(&stderr_buf[..n]).to_string();
-                            total_bytes += n;
-                            let _ = output_tx.send(chunk.clone()).await;
-                            accumulate(&mut out, &mut tail, &mut truncated, &chunk);
-                        }
-                    }
-                }
-
-                // Build final output: head + [truncated] + tail
-                if truncated {
-                    out.truncate(HEAD_BYTES);
-                    out.push_str(&format!(
-                        "\n\n[... {total_bytes} bytes total, middle truncated ...]\n\n"
-                    ));
-                    out.push_str(&tail);
-                }
-
-                if aborted || timed_out {
-                    child.kill().await.ok();
-                    if aborted { out.push_str("\n[aborted]"); }
-                    if timed_out { out.push_str("\n[timeout]"); }
-                    (out, if aborted { 130 } else { 124 })
-                } else {
-                    let status = child.wait().await?;
-                    (out, status.code().unwrap_or(1))
-                }
-            };
+            let (output, exit_code) = read_output(
+                &mut stdout, &mut stderr, &output_tx, &cancel, &mut child, timeout_ms,
+            ).await?;
 
             let mut result_str = output;
             if exit_code != 0 && !result_str.contains("[exit code:") {
@@ -169,8 +102,73 @@ impl Tool for BashTool {
     }
 }
 
+/// Read stdout + stderr interleaved with cancel/deadline support.
+async fn read_output(
+    stdout: &mut tokio::process::ChildStdout,
+    stderr: &mut tokio::process::ChildStderr,
+    output_tx: &mpsc::Sender<String>,
+    cancel: &CancellationToken,
+    child: &mut tokio::process::Child,
+    timeout_ms: u64,
+) -> Result<(String, i32)> {
+    let mut out = String::new();
+    let mut total_bytes = 0usize;
+    let mut tail = String::new();
+    let mut truncated = false;
+    let mut buf = [0u8; 4096];
+    let mut stderr_buf = [0u8; 4096];
+    let mut aborted = false;
+    let mut timed_out = false;
+    let mut stdout_done = false;
+    let mut stderr_done = false;
+    let deadline = tokio::time::Instant::now()
+        + std::time::Duration::from_millis(timeout_ms);
+
+    loop {
+        if stdout_done && stderr_done { break; }
+        tokio::select! {
+            biased;
+            _ = cancel.cancelled() => { aborted = true; break; }
+            _ = tokio::time::sleep_until(deadline) => { timed_out = true; break; }
+            n = stdout.read(&mut buf), if !stdout_done => {
+                let n = n?;
+                if n == 0 { stdout_done = true; continue; }
+                let chunk = String::from_utf8_lossy(&buf[..n]).to_string();
+                total_bytes += n;
+                let _ = output_tx.send(chunk.clone()).await;
+                accumulate(&mut out, &mut tail, &mut truncated, &chunk);
+            }
+            n = stderr.read(&mut stderr_buf), if !stderr_done => {
+                let n = n?;
+                if n == 0 { stderr_done = true; continue; }
+                let chunk = String::from_utf8_lossy(&stderr_buf[..n]).to_string();
+                total_bytes += n;
+                let _ = output_tx.send(chunk.clone()).await;
+                accumulate(&mut out, &mut tail, &mut truncated, &chunk);
+            }
+        }
+    }
+
+    if truncated {
+        out.truncate(HEAD_BYTES);
+        out.push_str(&format!(
+            "\n\n[... {total_bytes} bytes total, middle truncated ...]\n\n"
+        ));
+        out.push_str(&tail);
+    }
+
+    if aborted || timed_out {
+        child.kill().await.ok();
+        if aborted { out.push_str("\n[aborted]"); }
+        if timed_out { out.push_str("\n[timeout]"); }
+        Ok((out, if aborted { 130 } else { 124 }))
+    } else {
+        let status = child.wait().await?;
+        Ok((out, status.code().unwrap_or(1)))
+    }
+}
+
 /// Accumulate output: head in `out`, tail as rolling window.
-/// Once total exceeds MAX_OUTPUT, stop appending to `out` and keep rolling `tail`.
 fn accumulate(out: &mut String, tail: &mut String, truncated: &mut bool, chunk: &str) {
     if !*truncated {
         out.push_str(chunk);
@@ -181,25 +179,10 @@ fn accumulate(out: &mut String, tail: &mut String, truncated: &mut bool, chunk: 
     } else {
         tail.push_str(chunk);
         if tail.len() > TAIL_BYTES * 2 {
-            // Keep only the last TAIL_BYTES
             let start = tail.len() - TAIL_BYTES;
             *tail = tail[start..].to_owned();
         }
     }
-}
-
-/// Check if any segment of a piped/chained command starts with a dangerous command.
-fn is_dangerous_cmd(command: &str) -> bool {
-    for segment in command.split(&['|', ';'][..]) {
-        // Split on && and || too
-        for part in segment.split("&&").flat_map(|s| s.split("||")) {
-            let base = part.split_whitespace().next().unwrap_or("");
-            if DANGEROUS_CMDS.iter().any(|&cmd| base == cmd || base.starts_with(&format!("{cmd}."))) {
-                return true;
-            }
-        }
-    }
-    false
 }
 
 #[cfg(test)]
@@ -217,7 +200,6 @@ mod tests {
         ).await.unwrap();
 
         assert!(result.contains("hello"));
-        // Should have received streaming output
         let chunk = rx.try_recv();
         assert!(chunk.is_ok());
     }
@@ -246,22 +228,6 @@ mod tests {
         ).await;
 
         assert!(result.is_err());
-    }
-
-    #[test]
-    fn dangerous_cmd_detection() {
-        // Should block
-        assert!(is_dangerous_cmd("dd if=/dev/zero of=/dev/sda"));
-        assert!(is_dangerous_cmd("mkfs.ext4 /dev/sda"));
-        assert!(is_dangerous_cmd("echo x && dd if=a of=b"));
-        assert!(is_dangerous_cmd("echo x | dd of=/dev/null"));
-
-        // Should NOT block
-        assert!(!is_dangerous_cmd("git add ."));
-        assert!(!is_dangerous_cmd("git add -A && git commit -m 'msg'"));
-        assert!(!is_dangerous_cmd("git commit -m 'added feature'"));
-        assert!(!is_dangerous_cmd("echo add something"));
-        assert!(!is_dangerous_cmd("addr2line -e binary"));
     }
 
     #[tokio::test]

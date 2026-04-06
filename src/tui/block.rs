@@ -7,7 +7,7 @@ use crate::tui::text::{Line, Span};
 use crate::tui::theme::{icon, palette, Rgb};
 use smallvec::smallvec;
 
-const TOOL_PREVIEW_LINES: usize = 4;
+const TOOL_PREVIEW_LINES: usize = 12;
 const WRITE_TOOLS: &[&str] = &["Write", "Edit", "apply_patch"];
 const SEARCH_TOOLS: &[&str] = &["web_search", "WebSearch"];
 
@@ -523,16 +523,28 @@ fn render_tool(tb: &ToolBlock, content_w: usize, spinner_frame: usize) -> Vec<Li
         // Show streaming content for write tools
         if is_write {
             let lang = lang_from_path(&tb.summary);
+            // Diff lines already drained from tool_output
             for t in &tb.output {
                 result.push(diff_line_lang(t, lang));
             }
-            if let Some(stream) = &tb.stream
-                && !stream.partial().is_empty()
-            {
-                result.push(Line::new(smallvec![
-                    Span::new("  ".to_owned(), palette::DIM),
-                    Span::new(stream.partial().to_owned(), palette::DIFF_CTX),
-                ]));
+            // Streaming preview from tool_input (content being written)
+            if let Some(stream) = &tb.stream {
+                let total = stream.committed.len();
+                if total > 0 {
+                    let show = &stream.committed[total.saturating_sub(TOOL_PREVIEW_LINES)..];
+                    for line in show {
+                        result.push(Line::new(smallvec![
+                            Span::new("  ".to_owned(), palette::DIM),
+                            Span::new(line.clone(), palette::DIM),
+                        ]));
+                    }
+                }
+                if !stream.partial().is_empty() {
+                    result.push(Line::new(smallvec![
+                        Span::new("  ".to_owned(), palette::DIM),
+                        Span::new(stream.partial().to_owned(), palette::DIM),
+                    ]));
+                }
             }
         } else {
             // Non-write: show last few output lines

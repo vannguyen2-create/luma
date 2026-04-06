@@ -22,6 +22,7 @@ pub mod palette {
     pub const PEACH: Rgb = Rgb(250, 179, 135);
     pub const DIFF_ADD: Rgb = Rgb(166, 227, 161);
     pub const DIFF_DEL: Rgb = Rgb(243, 139, 168);
+    #[allow(dead_code)]
     pub const DIFF_CTX: Rgb = Rgb(108, 112, 134);
     pub const DIFF_ADD_BG: Rgb = Rgb(30, 50, 30);
     pub const DIFF_DEL_BG: Rgb = Rgb(55, 25, 30);
