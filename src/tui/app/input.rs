@@ -19,7 +19,16 @@ pub fn read_stdin_loop(tx: mpsc::Sender<Event>) {
             if pending.is_empty() { break; }
             match try_parse_event(&pending) {
                 ParseResult::Event(event, consumed) => {
-                    if tx.blocking_send(event).is_err() { return; }
+                    // Never block: drop events if channel full rather than
+                    // freezing the input thread (and the entire UI).
+                    match tx.try_send(event) {
+                        Ok(()) => {}
+                        Err(mpsc::error::TrySendError::Full(_)) => {
+                            // Channel full — UI is busy. Drop this event.
+                            // User will retry the keypress.
+                        }
+                        Err(mpsc::error::TrySendError::Closed(_)) => return,
+                    }
                     pending.drain(..consumed);
                 }
                 ParseResult::Incomplete => break,
@@ -36,7 +45,9 @@ pub fn read_stdin_loop(tx: mpsc::Sender<Event>) {
                 };
                 pending.extend_from_slice(&raw[..n]);
             } else {
-                if tx.blocking_send(Event::Key(KeyEvent::Escape)).is_err() {
+                if let Err(mpsc::error::TrySendError::Closed(_)) =
+                    tx.try_send(Event::Key(KeyEvent::Escape))
+                {
                     return;
                 }
                 pending.remove(0);

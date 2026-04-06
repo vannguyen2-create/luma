@@ -166,20 +166,50 @@ impl super::App {
         turn_durations: &[f64],
     ) {
         use crate::core::types::Role;
+
+        // Find the start of the last few turns to avoid rendering
+        // entire history (which can freeze the UI for large sessions).
+        const MAX_RENDER_TURNS: usize = 6;
+        let mut turn_starts = Vec::new();
+        for (i, msg) in messages.iter().enumerate() {
+            if msg.role == Role::User {
+                turn_starts.push(i);
+            }
+        }
+        let skip_turns = turn_starts.len().saturating_sub(MAX_RENDER_TURNS);
+        let render_from = if skip_turns > 0 {
+            turn_starts[skip_turns]
+        } else {
+            0
+        };
+
+        if skip_turns > 0 {
+            self.ui.output.info(&format!(
+                "({skip_turns} earlier turns hidden, showing last {MAX_RENDER_TURNS})"
+            ));
+            self.ui.output.divider();
+        }
+
         let mut turn_idx: usize = 0;
         let mut seen_user = false;
-        for msg in messages {
+        for (i, msg) in messages.iter().enumerate() {
             match msg.role {
                 Role::System => {}
                 Role::User => {
+                    turn_idx += 1;
+                    if i < render_from {
+                        continue;
+                    }
                     if seen_user {
-                        self.turn_divider(turn_durations, turn_idx.wrapping_sub(1));
+                        self.turn_divider(turn_durations, turn_idx.wrapping_sub(2));
                     }
                     seen_user = true;
-                    turn_idx += 1;
                     self.ui.output.user_message(&msg.content);
                 }
                 Role::Assistant => {
+                    if i < render_from {
+                        continue;
+                    }
                     if !msg.content.is_empty() {
                         self.ui.output.assistant_message(&msg.content);
                     }
