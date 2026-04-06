@@ -83,7 +83,33 @@ impl super::App {
             registry.register(Box::new(crate::tool::glob::GlobTool));
             registry.register(Box::new(crate::tool::grep::GrepTool));
         }
+
+        // Declare server capabilities — each provider maps these to its own format.
+        registry.add_server_capability("web_search");
+
+        // Fallback: client-side web search when provider doesn't support built-in.
+        if let Some(backend) = Self::search_backend() {
+            registry.register(Box::new(crate::tool::web_search::WebSearchTool::new(
+                backend,
+            )));
+        }
+
         self.agent.tx = Some(crate::core::agent::spawn(config, registry, tx));
+    }
+
+    /// Detect search backend from environment variables.
+    fn search_backend() -> Option<crate::tool::web_search::SearchBackend> {
+        use crate::tool::web_search::SearchBackend;
+        if let Ok(key) = std::env::var("EXA_API_KEY") {
+            return Some(SearchBackend::Exa { api_key: key });
+        }
+        if let Ok(key) = std::env::var("TAVILY_API_KEY") {
+            return Some(SearchBackend::Tavily { api_key: key });
+        }
+        if let Ok(url) = std::env::var("SEARXNG_URL") {
+            return Some(SearchBackend::SearXNG { base_url: url });
+        }
+        None
     }
 
     /// Handle agent completion — show duration, reset state, process pending.

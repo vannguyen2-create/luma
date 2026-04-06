@@ -89,12 +89,13 @@ async fn run_turn(
     cancel: tokio_util::sync::CancellationToken,
 ) -> Result<()> {
     let schemas = registry.schemas();
+    let server_schemas = provider.server_tool_schemas(registry.server_capabilities());
 
     for _ in 0..MAX_ITERATIONS {
         if cancel.is_cancelled() { anyhow::bail!("Aborted"); }
 
         let (response, usage) = provider
-            .stream(messages, &schemas, tx.clone(), cancel.clone())
+            .stream(messages, &schemas, &server_schemas, tx.clone(), cancel.clone())
             .await?;
 
         session_usage.input_tokens += usage.input_tokens;

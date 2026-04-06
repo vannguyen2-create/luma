@@ -9,10 +9,14 @@ use smallvec::smallvec;
 
 const TOOL_PREVIEW_LINES: usize = 4;
 const WRITE_TOOLS: &[&str] = &["Write", "Edit", "apply_patch"];
+const SEARCH_TOOLS: &[&str] = &["web_search", "WebSearch"];
+
+fn is_search_tool(name: &str) -> bool {
+    SEARCH_TOOLS.contains(&name)
+}
 
 fn tool_icon(name: &str) -> &'static str {
-    if name == "Grep" { icon::TOOL_GREP }
-    else if is_write_tool(name) { icon::TOOL_IN }
+    if is_write_tool(name) { icon::TOOL_IN }
     else { icon::TOOL_OUT }
 }
 
@@ -560,6 +564,11 @@ fn render_tool(tb: &ToolBlock, content_w: usize, spinner_frame: usize) -> Vec<Li
         return render_tool_block(tb, content_w);
     }
 
+    // ── Completed: search tools → query + results ──
+    if is_search_tool(&tb.name) {
+        return render_search_block(tb, content_w);
+    }
+
     // ── Completed: inline layout ──
     render_tool_inline(tb, content_w)
 }
@@ -604,6 +613,71 @@ fn render_tool_block(tb: &ToolBlock, content_w: usize) -> Vec<Line> {
 }
 
 /// Completed non-write tool — single inline line.
+/// Completed search tool — query + numbered results with title, URL, snippet.
+fn render_search_block(tb: &ToolBlock, content_w: usize) -> Vec<Line> {
+    let ic = tool_icon(&tb.name);
+    let query = &tb.summary;
+    let mut h = smallvec![
+        Span::new(format!("{ic} "), palette::DIM),
+        Span::new("Search".to_owned(), palette::DIM),
+    ];
+    if !query.is_empty() {
+        h.push(Span::new(format!("  \"{query}\""), palette::FG));
+    }
+    if !tb.end_summary.is_empty() {
+        h.push(Span::new(format!("  {}", tb.end_summary), palette::MUTED));
+    }
+    let mut result = crate::tui::text::wrap_line(&Line::new(h), content_w, None);
+
+    // Parse structured output: blocks of "title\nurl\n[snippet\n]\n"
+    // Render 1 line per result: "  title — domain"
+    let mut idx = 0;
+    let mut hit_num = 0;
+    while idx < tb.output.len() {
+        let title = tb.output[idx].trim();
+        if title.is_empty() { idx += 1; continue; }
+        hit_num += 1;
+        let url = tb.output.get(idx + 1).map(|s| s.trim()).unwrap_or("");
+        let snippet = if idx + 2 < tb.output.len() {
+            let s = tb.output[idx + 2].trim();
+            if s.is_empty() || s.starts_with("http") { "" } else { s }
+        } else { "" };
+
+        let domain = if url.is_empty() { String::new() } else { extract_domain(url) };
+
+        // Truncate title to fit: "  N. title — domain"
+        let prefix_len = format!("  {hit_num}. ").len();
+        let suffix = if domain.is_empty() { String::new() } else { format!(" -- {domain}") };
+        let max_title = content_w.saturating_sub(prefix_len + suffix.len());
+        let display_title = if title.len() > max_title && max_title > 3 {
+            format!("{}...", &title[..max_title - 3])
+        } else {
+            title.to_owned()
+        };
+
+        result.push(Line::new(smallvec![
+            Span::new(format!("  {hit_num}. "), palette::MUTED),
+            Span::new(display_title, palette::FG),
+            Span::new(suffix, palette::MUTED),
+        ]));
+
+        // Advance past title + url + optional snippet + blank
+        idx += if snippet.is_empty() { 3 } else { 4 };
+    }
+    result
+}
+
+/// Extract domain from URL: "https://docs.rs/tokio/..." → "docs.rs"
+fn extract_domain(url: &str) -> String {
+    url.trim_start_matches("https://")
+       .trim_start_matches("http://")
+       .trim_start_matches("www.")
+       .split('/')
+       .next()
+       .unwrap_or(url)
+       .to_owned()
+}
+
 fn render_tool_inline(tb: &ToolBlock, content_w: usize) -> Vec<Line> {
     let ic = tool_icon(&tb.name);
     let mut h = smallvec![
@@ -705,8 +779,10 @@ mod tests {
     #[test]
     fn tool_icon_write_vs_read() {
         assert_eq!(tool_icon("Write"), icon::TOOL_IN);
+        assert_eq!(tool_icon("Edit"), icon::TOOL_IN);
         assert_eq!(tool_icon("Bash"), icon::TOOL_OUT);
-        assert_eq!(tool_icon("Grep"), icon::TOOL_GREP);
+        assert_eq!(tool_icon("Grep"), icon::TOOL_OUT);
+        assert_eq!(tool_icon("web_search"), icon::TOOL_OUT);
     }
 
     #[test]

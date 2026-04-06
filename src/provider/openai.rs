@@ -38,16 +38,29 @@ impl Provider for OpenAIProvider {
     fn thinking(&self) -> ThinkingLevel { self.thinking }
     fn set_thinking(&mut self, level: ThinkingLevel) { self.thinking = level; }
 
+    fn server_tool_schemas(&self, _capabilities: &[String]) -> Vec<serde_json::Value> {
+        // Chat Completions API does not support web_search tool type.
+        // Web search requires search-specific models (gpt-4o-search-preview).
+        // Client-side WebSearchTool fallback handles this.
+        vec![]
+    }
+
     fn stream<'a>(
         &'a self,
         messages: &'a [Message],
         tools: &'a [ToolSchema],
+        server_tools: &'a [serde_json::Value],
         tx: mpsc::Sender<Event>,
         cancel: CancellationToken,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(Message, Usage)>> + Send + 'a>> {
         Box::pin(async move {
         let api_messages = to_api_messages(messages);
-        let api_tools = to_api_tools(tools);
+        let mut api_tools = to_api_tools(tools);
+
+        // Append server-side tools
+        for st in server_tools {
+            api_tools.push(st.clone());
+        }
 
         let mut body = serde_json::json!({
             "model": self.model,

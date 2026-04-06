@@ -6,3 +6,4 @@ pub mod glob;
 pub mod grep;
 pub mod apply_patch;
 pub mod diff;
+pub mod web_search;

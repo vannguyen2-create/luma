@@ -37,7 +37,6 @@ pub mod icon {
     pub const PROMPT: &str = "┃";
     pub const TOOL_OUT: &str = "→";
     pub const TOOL_IN: &str = "←";
-    pub const TOOL_GREP: &str = "✱";
     pub const SKILL: &str = "◈";
     pub const SUCCESS: &str = "✓";
     pub const ERROR: &str = "✗";

@@ -38,10 +38,17 @@ impl Provider for ClaudeProvider {
     fn thinking(&self) -> ThinkingLevel { self.thinking }
     fn set_thinking(&mut self, level: ThinkingLevel) { self.thinking = level; }
 
+    fn server_tool_schemas(&self, capabilities: &[String]) -> Vec<serde_json::Value> {
+        capabilities.iter().filter_map(|cap| if cap == "web_search" {
+            Some(serde_json::json!({"type": "web_search_20250305", "name": "web_search", "max_uses": 5}))
+        } else { None }).collect()
+    }
+
     fn stream<'a>(
         &'a self,
         messages: &'a [Message],
         tools: &'a [ToolSchema],
+        server_tools: &'a [serde_json::Value],
         tx: mpsc::Sender<Event>,
         cancel: CancellationToken,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(Message, Usage)>> + Send + 'a>> {
@@ -49,6 +56,11 @@ impl Provider for ClaudeProvider {
         let system_text = extract_system(messages);
         let api_messages = to_api_messages(messages);
         let mut api_tools = to_api_tools(tools);
+
+        // Append server-side tools (e.g. web search)
+        for st in server_tools {
+            api_tools.push(st.clone());
+        }
 
         // Prompt caching: single cache_control breakpoint on last message
         let mut api_messages = api_messages;
@@ -124,6 +136,8 @@ impl Provider for ClaudeProvider {
         let mut current_name = String::new();
         let mut current_args = String::new();
         let mut streaming_content = false;
+        let mut server_tool_json = String::new();
+        let mut in_server_tool = false;
         let mut usage = Usage::default();
 
         let tx_ref = &tx;
@@ -138,18 +152,47 @@ impl Provider for ClaudeProvider {
 
                 if data["type"] == "content_block_start" {
                     let block = &data["content_block"];
-                    if block["type"] == "tool_use" {
-                        current_id = block["id"].as_str().unwrap_or("").to_owned();
-                        current_name = block["name"].as_str().unwrap_or("").to_owned();
-                        current_args.clear();
-                        streaming_content = false;
-                        // Show spinner early only for write/edit (long arg streaming)
-                        if is_streamable_tool(&current_name) {
-                            let _ = tx_ref.try_send(Event::ToolStart {
-                                name: current_name.clone(),
-                                summary: String::new(),
+                    let block_type = block["type"].as_str().unwrap_or("");
+                    match block_type {
+                        "tool_use" => {
+                            current_id = block["id"].as_str().unwrap_or("").to_owned();
+                            current_name = block["name"].as_str().unwrap_or("").to_owned();
+                            current_args.clear();
+                            streaming_content = false;
+                            if is_streamable_tool(&current_name) {
+                                let _ = tx_ref.try_send(Event::ToolStart {
+                                    name: current_name.clone(),
+                                    summary: String::new(),
+                                });
+                            }
+                        }
+                        "server_tool_use" => {
+                            if block["name"] == "web_search" {
+                                in_server_tool = true;
+                                server_tool_json.clear();
+                            }
+                        }
+                        "web_search_tool_result" => {
+                            let content_len = block["content"].as_array().map(|a| a.len()).unwrap_or(0);
+                            crate::dbg_log!("claude web_search_tool_result: {} items in content", content_len);
+                            let mut hits = Vec::new();
+                            if let Some(results) = block["content"].as_array() {
+                                for r in results {
+                                    let title = r["title"].as_str().unwrap_or("").to_owned();
+                                    let url = r["url"].as_str().unwrap_or("").to_owned();
+                                    if !url.is_empty() {
+                                        hits.push(crate::event::SearchHit {
+                                            title, url, snippet: String::new(),
+                                        });
+                                    }
+                                }
+                            }
+                            let _ = tx_ref.try_send(Event::WebSearchDone {
+                                query: String::new(),
+                                results: hits,
                             });
                         }
+                        _ => {}
                     }
                 }
 
@@ -167,6 +210,16 @@ impl Provider for ClaudeProvider {
                     } else if delta["type"] == "input_json_delta"
                         && let Some(j) = delta["partial_json"].as_str()
                     {
+                        // Server tool (web search): accumulate JSON, extract query
+                        if in_server_tool {
+                            server_tool_json.push_str(j);
+                            if let Some(start) = server_tool_json.find("\"query\"")
+                                && let Some(q) = extract_json_string_value(&server_tool_json[start..])
+                            {
+                                let _ = tx_ref.try_send(Event::WebSearchStart { query: q });
+                                in_server_tool = false;
+                            }
+                        }
                         current_args.push_str(j);
                         // Stream content preview for write/edit tools
                         if is_streamable_tool(&current_name) {
@@ -353,6 +406,24 @@ fn has_content_key(args: &str) -> bool {
 }
 
 /// Extract text after the content key's opening quote.
+/// Extract a JSON string value from partial JSON like `"query": "rust async"`.
+fn extract_json_string_value(s: &str) -> Option<String> {
+    // Find pattern: "key": "value"
+    let colon = s.find(':')?;
+    let rest = s[colon + 1..].trim_start();
+    if !rest.starts_with('"') { return None; }
+    let inner = &rest[1..];
+    // Find closing quote (handle escapes)
+    let mut end = 0;
+    let mut chars = inner.chars();
+    while let Some(c) = chars.next() {
+        if c == '\\' { chars.next(); end += 2; continue; }
+        if c == '"' { return Some(unescape_json_chunk(&inner[..end])); }
+        end += c.len_utf8();
+    }
+    None // incomplete JSON, query not fully received yet
+}
+
 fn extract_content_value(args: &str) -> Option<String> {
     let mut best_pos = None;
     let mut best_key_len = 0;

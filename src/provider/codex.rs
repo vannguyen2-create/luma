@@ -35,17 +35,29 @@ impl Provider for CodexProvider {
     fn thinking(&self) -> ThinkingLevel { self.thinking }
     fn set_thinking(&mut self, level: ThinkingLevel) { self.thinking = level; }
 
+    fn server_tool_schemas(&self, capabilities: &[String]) -> Vec<serde_json::Value> {
+        capabilities.iter().filter_map(|cap| if cap == "web_search" {
+            Some(serde_json::json!({"type": "web_search"}))
+        } else { None }).collect()
+    }
+
     fn stream<'a>(
         &'a self,
         messages: &'a [Message],
         tools: &'a [ToolSchema],
+        server_tools: &'a [serde_json::Value],
         tx: mpsc::Sender<Event>,
         cancel: CancellationToken,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(Message, Usage)>> + Send + 'a>> {
         Box::pin(async move {
         let system = extract_system(messages);
         let input = build_input(messages);
-        let api_tools = to_api_tools(tools);
+        let mut api_tools = to_api_tools(tools);
+
+        // Append server-side tools
+        for st in server_tools {
+            api_tools.push(st.clone());
+        }
 
         let mut body = serde_json::json!({
             "model": self.model,
@@ -125,22 +137,49 @@ impl Provider for CodexProvider {
                             let _ = tx.try_send(Event::Thinking(delta.to_owned()));
                         }
                     }
+                    // Web search: show spinner on first event only
+                    "response.web_search_call.in_progress" => {
+                        let _ = tx.try_send(Event::WebSearchStart { query: String::new() });
+                    }
+                    "response.web_search_call.searching" => {}
+                    // Web search done OR message done
+                    "response.output_item.done" => {
+                        let item_type = event["item"]["type"].as_str().unwrap_or("");
+                        crate::dbg_log!("codex output_item.done type={item_type}");
+                        if item_type == "web_search_call" {
+                            let query = event["item"]["action"]["query"]
+                                .as_str()
+                                .unwrap_or("")
+                                .to_owned();
+                            crate::dbg_log!("codex web_search done query={query}");
+                            let _ = tx.try_send(Event::WebSearchDone {
+                                query,
+                                results: vec![],
+                            });
+                        }
+                    }
+                    "response.web_search_call.completed" => {}
                     "response.completed" => {
-                        // Extract tool calls from output
+                        // Extract tool calls and web search results from output
                         if let Some(output) = event["response"]["output"].as_array() {
                             for item in output {
-                                if item["type"] == "function_call" {
-                                    tool_calls.push(ToolCall {
-                                        id: item["call_id"].as_str().unwrap_or("").to_owned(),
-                                        r#type: "function".into(),
-                                        function: ToolCallFunction {
-                                            name: item["name"].as_str().unwrap_or("").to_owned(),
-                                            arguments: item["arguments"].as_str().unwrap_or("{}").to_owned(),
-                                        },
-                                    });
+                                match item["type"].as_str().unwrap_or("") {
+                                    "function_call" => {
+                                        tool_calls.push(ToolCall {
+                                            id: item["call_id"].as_str().unwrap_or("").to_owned(),
+                                            r#type: "function".into(),
+                                            function: ToolCallFunction {
+                                                name: item["name"].as_str().unwrap_or("").to_owned(),
+                                                arguments: item["arguments"].as_str().unwrap_or("{}").to_owned(),
+                                            },
+                                        });
+                                    }
+                                    "web_search_call" => {}
+                                    _ => {}
                                 }
                             }
                         }
+                        // Web search results already emitted via output_item.done above.
                         // Usage
                         if let Some(u) = event["response"]["usage"].as_object() {
                             let cached = u.get("input_tokens_details")

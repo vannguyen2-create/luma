@@ -60,6 +60,14 @@ pub enum MouseEvent {
     },
 }
 
+/// A single web search result.
+#[derive(Debug, Clone)]
+pub struct SearchHit {
+    pub title: String,
+    pub url: String,
+    pub snippet: String,
+}
+
 /// Every event the app loop handles.
 #[derive(Debug, Clone)]
 pub enum Event {
@@ -88,6 +96,15 @@ pub enum Event {
     ToolEnd {
         name: String,
         summary: String,
+    },
+    /// Server-side web search started.
+    WebSearchStart {
+        query: String,
+    },
+    /// Server-side web search completed.
+    WebSearchDone {
+        query: String,
+        results: Vec<SearchHit>,
     },
     SkillStart(String),
     SkillEnd(String),

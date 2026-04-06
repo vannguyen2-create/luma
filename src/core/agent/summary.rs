@@ -40,6 +40,15 @@ pub fn format_tool_summary(name: &str, args: &serde_json::Value) -> String {
                 None => pattern.to_owned(),
             }
         }
+        "websearch" => {
+            let query = args.get("query").and_then(|v| v.as_str()).unwrap_or("");
+            if query.chars().count() > 50 {
+                let truncated: String = query.chars().take(47).collect();
+                format!("\"{truncated}...\"")
+            } else {
+                format!("\"{query}\"")
+            }
+        }
         "bash" | "exec_command" | "shell" => {
             let cmd = args.get("command").and_then(|v| v.as_str()).unwrap_or("");
             if cmd.chars().count() > 60 {

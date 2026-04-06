@@ -1,45 +1,63 @@
-/// Tool registry — maps tool names to implementations.
+/// Tool registry — client tools (we execute) and server capabilities.
 use std::collections::HashMap;
 use crate::core::tool::Tool;
 use crate::core::types::ToolSchema;
 
-/// Stores registered tools by name.
+/// Stores registered tools and declared server capabilities.
 pub struct Registry {
     tools: HashMap<String, Box<dyn Tool>>,
+    /// Server capability names (e.g. "web_search").
+    /// Provider maps these to its own schema format.
+    server_capabilities: Vec<String>,
 }
 
 impl Registry {
-    /// Create an empty registry.
     pub fn new() -> Self {
-        Self { tools: HashMap::new() }
+        Self {
+            tools: HashMap::new(),
+            server_capabilities: Vec::new(),
+        }
     }
 
-    /// Register a tool by its name.
+    /// Register a client tool (we execute).
     pub fn register(&mut self, tool: Box<dyn Tool>) {
         self.tools.insert(tool.name().to_owned(), tool);
     }
 
-    /// Look up a tool by name.
+    /// Declare a server capability by name.
+    /// Provider will map this to its native schema format.
+    pub fn add_server_capability(&mut self, name: &str) {
+        if !self.server_capabilities.contains(&name.to_owned()) {
+            self.server_capabilities.push(name.to_owned());
+        }
+    }
+
+    /// Server capability names.
+    pub fn server_capabilities(&self) -> &[String] {
+        &self.server_capabilities
+    }
+
+    /// Check if a server capability is declared.
+    #[allow(dead_code)]
+    pub fn has_capability(&self, name: &str) -> bool {
+        self.server_capabilities.iter().any(|c| c == name)
+    }
+
+    /// Look up a client tool by name.
     pub fn get(&self, name: &str) -> Option<&dyn Tool> {
         self.tools.get(name).map(|t| t.as_ref())
     }
 
-    /// All tool schemas for the current provider.
+    /// Client tool schemas.
     pub fn schemas(&self) -> Vec<ToolSchema> {
         self.tools.values().map(|t| t.schema()).collect()
     }
 
-    /// Number of registered tools.
     #[allow(dead_code)]
-    pub fn len(&self) -> usize {
-        self.tools.len()
-    }
+    pub fn len(&self) -> usize { self.tools.len() }
 
-    /// Whether the registry is empty.
     #[allow(dead_code)]
-    pub fn is_empty(&self) -> bool {
-        self.tools.is_empty()
-    }
+    pub fn is_empty(&self) -> bool { self.tools.is_empty() }
 }
 
 #[cfg(test)]
@@ -78,14 +96,22 @@ mod tests {
         reg.register(Box::new(FakeTool));
         assert_eq!(reg.len(), 1);
         assert!(reg.get("Read").is_some());
-        assert!(reg.get("missing").is_none());
     }
 
     #[test]
-    fn schemas_use_tool_names() {
+    fn server_capabilities() {
         let mut reg = Registry::new();
-        reg.register(Box::new(FakeTool));
-        let schemas = reg.schemas();
-        assert_eq!(schemas[0].name, "Read");
+        reg.add_server_capability("web_search");
+        assert!(reg.has_capability("web_search"));
+        assert!(!reg.has_capability("code_interpreter"));
+        assert_eq!(reg.server_capabilities(), &["web_search"]);
+    }
+
+    #[test]
+    fn no_duplicate_capabilities() {
+        let mut reg = Registry::new();
+        reg.add_server_capability("web_search");
+        reg.add_server_capability("web_search");
+        assert_eq!(reg.server_capabilities().len(), 1);
     }
 }

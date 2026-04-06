@@ -54,63 +54,29 @@ pub struct Span {
     pub bold: bool,
     pub italic: bool,
     pub decoration: bool,
+
 }
 
 impl Span {
     /// Create a plain span.
     pub fn new(text: impl Into<String>, fg: Rgb) -> Self {
-        Self {
-            text: text.into(),
-            fg,
-            bg: None,
-            bold: false,
-            italic: false,
-            decoration: false,
-        }
+        Self { text: text.into(), fg, bg: None, bold: false, italic: false, decoration: false }
     }
     /// Create a decoration span (skipped during copy).
     pub fn deco(text: impl Into<String>, fg: Rgb) -> Self {
-        Self {
-            text: text.into(),
-            fg,
-            bg: None,
-            bold: false,
-            italic: false,
-            decoration: true,
-        }
+        Self { text: text.into(), fg, bg: None, bold: false, italic: false, decoration: true }
     }
     /// Create a decoration span with bg (skipped during copy).
     pub fn deco_colored(text: impl Into<String>, fg: Rgb, bg: Rgb) -> Self {
-        Self {
-            text: text.into(),
-            fg,
-            bg: Some(bg),
-            bold: false,
-            italic: false,
-            decoration: true,
-        }
+        Self { text: text.into(), fg, bg: Some(bg), bold: false, italic: false, decoration: true }
     }
     /// Create a bold span.
     pub fn bold(text: impl Into<String>, fg: Rgb) -> Self {
-        Self {
-            text: text.into(),
-            fg,
-            bg: None,
-            bold: true,
-            italic: false,
-            decoration: false,
-        }
+        Self { text: text.into(), fg, bg: None, bold: true, italic: false, decoration: false }
     }
     /// Create an italic span.
     pub fn italic(text: impl Into<String>, fg: Rgb) -> Self {
-        Self {
-            text: text.into(),
-            fg,
-            bg: None,
-            bold: false,
-            italic: true,
-            decoration: false,
-        }
+        Self { text: text.into(), fg, bg: None, bold: false, italic: true, decoration: false }
     }
 }
 

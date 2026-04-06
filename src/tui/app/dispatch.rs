@@ -100,6 +100,33 @@ impl super::App {
                 self.ui.output.tool_end(&name, &summary);
                 Action::Render
             }
+            Event::WebSearchStart { query } => {
+                crate::dbg_log!("web_search_start: {query}");
+                self.ui.output.tool_start("web_search", &query);
+                Action::Render
+            }
+            Event::WebSearchDone { query, results } => {
+                let end = if results.is_empty() {
+                    "searched".to_owned()
+                } else {
+                    format!("{} results", results.len())
+                };
+                // Update summary with query if it wasn't available at start time
+                if !query.is_empty() {
+                    self.ui.output.tool_start("web_search", &query);
+                }
+                // Feed structured results
+                for hit in &results {
+                    let mut entry = format!("{}\n{}\n", hit.title, hit.url);
+                    if !hit.snippet.is_empty() {
+                        entry.push_str(&format!("{}\n", hit.snippet));
+                    }
+                    entry.push('\n');
+                    self.ui.output.tool_output("web_search", &entry);
+                }
+                self.ui.output.tool_end("web_search", &end);
+                Action::Render
+            }
             Event::SkillStart(name) => {
                 self.ui.output.skill_start(&name);
                 Action::Render
