@@ -18,7 +18,6 @@ use smallvec::{smallvec, SmallVec};
 pub enum BlockState {
     Normal,
     CodeFence {
-        #[allow(dead_code)] // TODO: syntax highlighting per language
         lang: String,
     },
     Table {
@@ -48,8 +47,8 @@ pub fn parse_line(raw: &str, state: &BlockState) -> (Vec<Line>, BlockState) {
         };
     }
 
-    if let BlockState::CodeFence { .. } = state {
-        let spans = highlight::highlight_code(raw);
+    if let BlockState::CodeFence { lang } = state {
+        let spans = highlight::highlight_code_with_lang(raw, Some(lang));
         return (vec![Line::new(spans)], state.clone());
     }
 

@@ -1,7 +1,7 @@
 /// Block types — content blocks for the output log.
 use crate::tool::diff::{parse_diff_line, DiffKind};
 use crate::tui::markdown::BlockState;
-use crate::tui::markdown::highlight::highlight_code;
+use crate::tui::markdown::highlight::highlight_code_with_lang;
 use crate::tui::stream::StreamBuf;
 use crate::tui::text::{Line, Span};
 use crate::tui::theme::{icon, palette, Rgb};
@@ -11,8 +11,9 @@ const TOOL_PREVIEW_LINES: usize = 4;
 const WRITE_TOOLS: &[&str] = &["write", "edit", "create_file", "apply_patch"];
 
 fn tool_icon(name: &str) -> &'static str {
-    if name == "grep" { icon::TOOL_GREP }
-    else if WRITE_TOOLS.contains(&name) { icon::TOOL_IN }
+    let lower = name.to_ascii_lowercase();
+    if lower == "grep" { icon::TOOL_GREP }
+    else if is_write_tool(name) { icon::TOOL_IN }
     else { icon::TOOL_OUT }
 }
 
@@ -427,11 +428,32 @@ fn render_user(lines: &[String], content_w: usize) -> Vec<Line> {
 
 /// Whether a tool is a write/edit tool (block layout when completed with output).
 fn is_write_tool(name: &str) -> bool {
-    WRITE_TOOLS.contains(&name)
+    // Case-insensitive: providers may use wire names ("Write", "Edit")
+    // until wire name normalization is implemented at the architecture level.
+    let lower = name.to_ascii_lowercase();
+    WRITE_TOOLS.iter().any(|t| *t == lower)
+}
+
+/// Infer language hint from a file path (for syntax highlighting).
+fn lang_from_path(path: &str) -> Option<&str> {
+    let ext = path.rsplit('.').next()?;
+    match ext {
+        "rs" => Some("rust"),
+        "py" => Some("python"),
+        "js" | "mjs" | "cjs" => Some("js"),
+        "ts" | "mts" | "cts" | "tsx" | "jsx" => Some("ts"),
+        _ => None,
+    }
 }
 
 /// Render a diff output line — line number + marker + syntax-highlighted content + bg color.
+#[cfg(test)]
 fn diff_line(raw: &str) -> Line {
+    diff_line_lang(raw, None)
+}
+
+/// Render a diff output line with optional language hint for syntax highlighting.
+fn diff_line_lang(raw: &str, lang: Option<&str>) -> Line {
     let dl = parse_diff_line(raw);
 
     if dl.kind == DiffKind::Separator {
@@ -466,7 +488,7 @@ fn diff_line(raw: &str) -> Line {
 
     // Content — syntax highlighted for add/del, plain for context
     if dl.kind == DiffKind::Add || dl.kind == DiffKind::Del {
-        let code_spans = highlight_code(&dl.text);
+        let code_spans = highlight_code_with_lang(&dl.text, lang);
         for mut s in code_spans {
             s.bg = bg;
             spans.push(s);
@@ -500,8 +522,9 @@ fn render_tool(tb: &ToolBlock, content_w: usize, spinner_frame: usize) -> Vec<Li
 
         // Show streaming content for write tools
         if is_write {
+            let lang = lang_from_path(&tb.summary);
             for t in &tb.output {
-                result.push(diff_line(t));
+                result.push(diff_line_lang(t, lang));
             }
             if let Some(stream) = &tb.stream
                 && !stream.partial().is_empty()
@@ -577,8 +600,9 @@ fn render_tool_block(tb: &ToolBlock, content_w: usize) -> Vec<Line> {
     } else {
         &tb.output[total.saturating_sub(TOOL_PREVIEW_LINES)..]
     };
+    let lang = lang_from_path(&tb.summary);
     for t in show {
-        result.push(diff_line(t));
+        result.push(diff_line_lang(t, lang));
     }
     result
 }
