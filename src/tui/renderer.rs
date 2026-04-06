@@ -289,6 +289,13 @@ impl Renderer {
         self.slots.iter_mut().find(|s| s.name == name)
     }
 
+    /// Temporarily override bottom padding for a region (e.g. dropdown fills padding).
+    pub fn set_bottom_padding(&mut self, name: &str, bottom: u16) {
+        if let Some(slot) = self.slot_mut(name) {
+            slot.region.padding.bottom = bottom;
+        }
+    }
+
     /// Paint lines into buffer for a region — shared by slot-based and iterator paths.
     fn paint_iter<'a>(
         buf: &mut ScreenBuffer,

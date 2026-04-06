@@ -145,13 +145,17 @@ impl super::App {
 
         if needs_overlay {
             let vis = self.ui.output.visible_lines().to_vec();
+            let full_h = self.layout.output.height as usize;
             let composited = if !picker_lines.is_empty() {
-                super::composite_overlay(&vis, &picker_lines, content_h as usize)
+                super::composite_overlay(&vis, &picker_lines, full_h)
             } else {
-                super::composite_overlay(&vis, &dropdown, content_h as usize)
+                super::composite_overlay(&vis, &dropdown, full_h)
             };
+            // Temporarily remove bottom padding so overlay fills the full region
+            self.renderer.set_bottom_padding("output", 0);
             self.renderer.set_lines("output", &composited);
         } else {
+            self.renderer.set_bottom_padding("output", self.layout.output.padding.bottom);
             // From viewport iterator — no intermediate Vec
             let iter = self.ui.output.visible_iter();
             self.renderer.set_lines_iter("output", iter);
