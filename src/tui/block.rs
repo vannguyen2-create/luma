@@ -8,11 +8,10 @@ use crate::tui::theme::{icon, palette, Rgb};
 use smallvec::smallvec;
 
 const TOOL_PREVIEW_LINES: usize = 4;
-const WRITE_TOOLS: &[&str] = &["write", "edit", "create_file", "apply_patch"];
+const WRITE_TOOLS: &[&str] = &["Write", "Edit", "apply_patch"];
 
 fn tool_icon(name: &str) -> &'static str {
-    let lower = name.to_ascii_lowercase();
-    if lower == "grep" { icon::TOOL_GREP }
+    if name == "Grep" { icon::TOOL_GREP }
     else if is_write_tool(name) { icon::TOOL_IN }
     else { icon::TOOL_OUT }
 }
@@ -428,10 +427,7 @@ fn render_user(lines: &[String], content_w: usize) -> Vec<Line> {
 
 /// Whether a tool is a write/edit tool (block layout when completed with output).
 fn is_write_tool(name: &str) -> bool {
-    // Case-insensitive: providers may use wire names ("Write", "Edit")
-    // until wire name normalization is implemented at the architecture level.
-    let lower = name.to_ascii_lowercase();
-    WRITE_TOOLS.iter().any(|t| *t == lower)
+    WRITE_TOOLS.contains(&name)
 }
 
 /// Infer language hint from a file path (for syntax highlighting).
@@ -679,7 +675,7 @@ mod tests {
     #[test]
     fn render_tool_collapsed() {
         let tb = ToolBlock {
-            name: "bash".into(),
+            name: "Bash".into(),
             summary: "$ ls".into(),
             output: (0..20).map(|i| format!("line {i}")).collect(),
             stream: None,
@@ -694,7 +690,7 @@ mod tests {
     #[test]
     fn render_tool_expanded() {
         let tb = ToolBlock {
-            name: "bash".into(),
+            name: "Bash".into(),
             summary: "$ ls".into(),
             output: (0..20).map(|i| format!("line {i}")).collect(),
             stream: None,
@@ -708,15 +704,15 @@ mod tests {
 
     #[test]
     fn tool_icon_write_vs_read() {
-        assert_eq!(tool_icon("write"), icon::TOOL_IN);
-        assert_eq!(tool_icon("bash"), icon::TOOL_OUT);
-        assert_eq!(tool_icon("grep"), icon::TOOL_GREP);
+        assert_eq!(tool_icon("Write"), icon::TOOL_IN);
+        assert_eq!(tool_icon("Bash"), icon::TOOL_OUT);
+        assert_eq!(tool_icon("Grep"), icon::TOOL_GREP);
     }
 
     #[test]
     fn tool_pending_shows_spinner() {
         let tb = ToolBlock {
-            name: "edit".into(),
+            name: "Edit".into(),
             summary: String::new(),
             output: Vec::new(),
             stream: None,
@@ -728,14 +724,14 @@ mod tests {
         let text: String = lines.iter()
             .flat_map(|l| l.spans.iter().map(|s| s.text.as_str()))
             .collect();
-        assert!(text.contains("edit"), "should show tool name: {text}");
-        assert!(text.contains("preparing edit"), "write tool pending: {text}");
+        assert!(text.contains("Edit"), "should show tool name: {text}");
+        assert!(text.contains("preparing Edit"), "write tool pending: {text}");
     }
 
     #[test]
     fn tool_inline_completed_read() {
         let tb = ToolBlock {
-            name: "read".into(),
+            name: "Read".into(),
             summary: "src/main.rs".into(),
             output: Vec::new(),
             stream: None,
@@ -754,7 +750,7 @@ mod tests {
     #[test]
     fn tool_block_completed_write_with_diff() {
         let tb = ToolBlock {
-            name: "write".into(),
+            name: "Write".into(),
             summary: "src/main.rs".into(),
             output: vec![
                 "  1 + fn main() {".into(),
@@ -771,7 +767,7 @@ mod tests {
         assert_eq!(lines.len(), 4, "block: title + 3 lines");
         let title: String = lines[0].spans.iter().map(|s| s.text.as_str()).collect();
         assert!(title.contains("←"), "write icon in title: {title}");
-        assert!(title.contains("write"), "tool name in title: {title}");
+        assert!(title.contains("Write"), "tool name in title: {title}");
         // Diff lines should have bg color and syntax highlight
         let first_diff: String = lines[1].spans.iter().map(|s| s.text.as_str()).collect();
         assert!(first_diff.contains("fn"), "diff content: {first_diff}");
@@ -784,7 +780,7 @@ mod tests {
     #[test]
     fn tool_write_no_output_uses_inline() {
         let tb = ToolBlock {
-            name: "write".into(),
+            name: "Write".into(),
             summary: "src/main.rs".into(),
             output: Vec::new(),
             stream: None,
@@ -804,7 +800,7 @@ mod tests {
         stream.feed("  2 +     println!(\"hi\");\n");
         stream.feed("partial line");
         let tb = ToolBlock {
-            name: "write".into(),
+            name: "Write".into(),
             summary: "src/main.rs".into(),
             output: vec!["  1 + fn main() {".into(), "  2 +     println!(\"hi\");".into()],
             stream: Some(stream),
@@ -865,14 +861,14 @@ mod tests {
     fn full_edit_tool_flow() {
         use crate::tui::output::OutputLog;
         let mut log = OutputLog::new(80, 30);
-        log.tool_start("edit", "");
+        log.tool_start("Edit", "");
         // Simulate tool sending diff via output
-        log.tool_output("edit", "  1   aaa\n");
-        log.tool_output("edit", "  2 - bbb\n");
-        log.tool_output("edit", "  2 + BBB\n");
-        log.tool_output("edit", "  3   ccc\n");
-        log.tool_start("edit", "test.rs");
-        log.tool_end("edit", "");
+        log.tool_output("Edit", "  1   aaa\n");
+        log.tool_output("Edit", "  2 - bbb\n");
+        log.tool_output("Edit", "  2 + BBB\n");
+        log.tool_output("Edit", "  3   ccc\n");
+        log.tool_start("Edit", "test.rs");
+        log.tool_end("Edit", "");
 
         log.prepare_frame();
         let vis = log.visible_lines().to_vec();

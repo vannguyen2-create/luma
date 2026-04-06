@@ -13,7 +13,7 @@ const MAX_RESULTS: usize = 200;
 pub struct GlobTool;
 
 impl Tool for GlobTool {
-    fn name(&self) -> &str { "glob" }
+    fn name(&self) -> &str { "Glob" }
 
     fn schema(&self) -> ToolSchema {
         ToolSchema {

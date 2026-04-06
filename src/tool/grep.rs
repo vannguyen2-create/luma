@@ -14,7 +14,7 @@ const MAX_LINE_LEN: usize = 500;
 pub struct GrepTool;
 
 impl Tool for GrepTool {
-    fn name(&self) -> &str { "grep" }
+    fn name(&self) -> &str { "Grep" }
 
     fn schema(&self) -> ToolSchema {
         ToolSchema {

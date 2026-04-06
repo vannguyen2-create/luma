@@ -535,11 +535,11 @@ mod tests {
     #[test]
     fn tool_expand_collapse() {
         let mut log = OutputLog::new(80, 10);
-        log.tool_start("bash", "$ ls");
+        log.tool_start("Bash", "$ ls");
         for i in 0..20 {
-            log.tool_output("bash", &format!("line {i}\n"));
+            log.tool_output("Bash", &format!("line {i}\n"));
         }
-        log.tool_end("bash", "");
+        log.tool_end("Bash", "");
 
         pf(&mut log);
         let (before, _, _) = log.scroll_info();
@@ -816,7 +816,7 @@ mod tests {
     #[test]
     fn tool_history_renders_collapsed() {
         let mut log = OutputLog::new(80, 10);
-        log.tool_history("bash", "$ ls");
+        log.tool_history("Bash", "$ ls");
         pf(&mut log);
         let (total, _, _) = log.scroll_info();
         assert!(total >= 1);
@@ -850,9 +850,9 @@ mod tests {
         log.user_message("find skills");
         log.append_thinking("Let me check");
         log.append_token("I'll look for skills!\n");
-        log.tool_start("bash", "$ npx skills find");
-        log.tool_output("bash", "found 3 skills\n");
-        log.tool_end("bash", "");
+        log.tool_start("Bash", "$ npx skills find");
+        log.tool_output("Bash", "found 3 skills\n");
+        log.tool_end("Bash", "");
         log.append_token("Here are the results.\n\nDone!");
         log.newline();
         log.divider_with_label("2.0s");
@@ -1015,28 +1015,6 @@ mod tests {
             "trackpad bounce broke auto-scroll: total={total2} h={h2} off={off2} max={max2}");
     }
 
-    /// Wire name "Write"/"Edit" (Anthropic) must be treated as write tools.
-    #[test]
-    fn wire_name_write_has_diff_colors() {
-        use crate::tui::theme::palette;
-        for wire_name in &["Write", "Edit"] {
-            let mut log = OutputLog::new(80, 50);
-            log.tool_start(wire_name, "src/main.rs");
-            log.tool_output(wire_name, "  1 + fn main() {\n");
-            log.tool_output(wire_name, "  2 +     println!(\"hello\");\n");
-            log.tool_end(wire_name, "");
-            pf(&mut log);
-
-            let vis = log.visible_lines().to_vec();
-            let fn_line = vis.iter().find(|l| {
-                l.spans.iter().any(|s| s.text.contains("fn"))
-            }).expect(&format!("{wire_name}: should find diff line with 'fn'"));
-            assert!(fn_line.spans.iter().any(|s| s.bg == Some(palette::DIFF_ADD_BG)),
-                "{wire_name}: missing DIFF_ADD_BG: {:?}",
-                fn_line.spans.iter().map(|s| (&s.text, s.bg)).collect::<Vec<_>>());
-        }
-    }
-
     /// Full pipeline: tool_input (Claude-style) → tool_start → tool_output → tool_end.
     /// Verifies visible_lines() carry diff bg and syntax highlight colors.
     #[test]
@@ -1044,21 +1022,21 @@ mod tests {
         let mut log = OutputLog::new(80, 50);
 
         // Phase 1: Claude streams tool input (content preview)
-        log.tool_input("write", "fn ");
-        log.tool_input("write", "main() {\n");
-        log.tool_input("write", "    println!(\"hello\");\n");
-        log.tool_input("write", "}");
+        log.tool_input("Write", "fn ");
+        log.tool_input("Write", "main() {\n");
+        log.tool_input("Write", "    println!(\"hello\");\n");
+        log.tool_input("Write", "}");
 
         // Phase 2: ToolStart resets stream
-        log.tool_start("write", "src/main.rs (3 lines)");
+        log.tool_start("Write", "src/main.rs (3 lines)");
 
         // Phase 3: Tool execution sends diff
-        log.tool_output("write", "  1 + fn main() {\n");
-        log.tool_output("write", "  2 +     println!(\"hello\");\n");
-        log.tool_output("write", "  3 + }\n");
+        log.tool_output("Write", "  1 + fn main() {\n");
+        log.tool_output("Write", "  2 +     println!(\"hello\");\n");
+        log.tool_output("Write", "  3 + }\n");
 
         // Phase 4: Tool done
-        log.tool_end("write", "");
+        log.tool_end("Write", "");
 
         // Phase 5: Render
         pf(&mut log);

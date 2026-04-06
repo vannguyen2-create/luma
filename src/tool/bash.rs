@@ -22,14 +22,19 @@ const DANGEROUS_SUBSTR: &[&str] = &[
 const DANGEROUS_CMDS: &[&str] = &["mkfs", "dd"];
 
 /// Execute shell commands with streaming output.
-pub struct BashTool;
+pub struct BashTool { name: &'static str }
+
+impl BashTool {
+    pub fn claude() -> Self { Self { name: "Bash" } }
+    pub fn codex() -> Self { Self { name: "exec_command" } }
+}
 
 impl Tool for BashTool {
-    fn name(&self) -> &str { "bash" }
+    fn name(&self) -> &str { self.name }
 
     fn schema(&self) -> ToolSchema {
         ToolSchema {
-            name: "bash".into(),
+            name: self.name.into(),
             description: concat!(
                 "Execute a shell command. Returns stdout + stderr.\n",
                 "Use for: builds, tests, git operations, running scripts, installing packages.\n",
@@ -174,7 +179,7 @@ mod tests {
 
     #[tokio::test]
     async fn bash_echo() {
-        let tool = BashTool;
+        let tool = BashTool::claude();
         let (tx, mut rx) = mpsc::channel(32);
         let cancel = CancellationToken::new();
         let result = tool.execute(
@@ -190,7 +195,7 @@ mod tests {
 
     #[tokio::test]
     async fn bash_exit_code() {
-        let tool = BashTool;
+        let tool = BashTool::claude();
         let (tx, _rx) = mpsc::channel(32);
         let cancel = CancellationToken::new();
         let result = tool.execute(
@@ -203,7 +208,7 @@ mod tests {
 
     #[tokio::test]
     async fn bash_dangerous_blocked() {
-        let tool = BashTool;
+        let tool = BashTool::claude();
         let (tx, _rx) = mpsc::channel(1);
         let cancel = CancellationToken::new();
         let result = tool.execute(
@@ -232,7 +237,7 @@ mod tests {
 
     #[tokio::test]
     async fn bash_cancel() {
-        let tool = BashTool;
+        let tool = BashTool::claude();
         let (tx, _rx) = mpsc::channel(32);
         let cancel = CancellationToken::new();
         let cancel_clone = cancel.clone();

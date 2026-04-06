@@ -15,11 +15,11 @@ const DEFAULT_LIMIT: usize = 2000;
 pub struct ReadTool;
 
 impl Tool for ReadTool {
-    fn name(&self) -> &str { "read" }
+    fn name(&self) -> &str { "Read" }
 
     fn schema(&self) -> ToolSchema {
         ToolSchema {
-            name: "read".into(),
+            name: "Read".into(),
             description: concat!(
                 "Read a file or list a directory. Returns content with line numbers (e.g. '1: content').\n",
                 "- Path must be absolute.\n",

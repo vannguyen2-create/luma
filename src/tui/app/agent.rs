@@ -73,17 +73,16 @@ impl super::App {
 
         let mut registry = crate::core::registry::Registry::new();
         if model.source == "codex" {
-            registry.register(Box::new(crate::tool::bash::BashTool));
+            registry.register(Box::new(crate::tool::bash::BashTool::codex()));
             registry.register(Box::new(crate::tool::apply_patch::ApplyPatchTool));
         } else {
             registry.register(Box::new(crate::tool::read::ReadTool));
             registry.register(Box::new(crate::tool::write::WriteTool));
             registry.register(Box::new(crate::tool::edit::EditTool));
-            registry.register(Box::new(crate::tool::bash::BashTool));
+            registry.register(Box::new(crate::tool::bash::BashTool::claude()));
             registry.register(Box::new(crate::tool::glob::GlobTool));
             registry.register(Box::new(crate::tool::grep::GrepTool));
         }
-        registry.set_wire_names(&model.source);
         self.agent.tx = Some(crate::core::agent::spawn(config, registry, tx));
     }
 

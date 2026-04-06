@@ -14,11 +14,11 @@ use tokio_util::sync::CancellationToken;
 pub struct EditTool;
 
 impl Tool for EditTool {
-    fn name(&self) -> &str { "edit" }
+    fn name(&self) -> &str { "Edit" }
 
     fn schema(&self) -> ToolSchema {
         ToolSchema {
-            name: "edit".into(),
+            name: "Edit".into(),
             description: concat!(
                 "Performs exact string replacement in an existing file.\n",
                 "- You MUST read the file before editing. Never edit code you haven't seen.\n",

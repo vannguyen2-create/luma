@@ -336,11 +336,10 @@ fn to_api_tools(tools: &[ToolSchema]) -> Vec<serde_json::Value> {
 }
 
 /// Tools whose content field should be streamed to UI as preview.
-const STREAMABLE_TOOLS: &[&str] = &["write", "edit", "create_file"];
+const STREAMABLE_TOOLS: &[&str] = &["Write", "Edit"];
 
 fn is_streamable_tool(name: &str) -> bool {
-    let lower = name.to_lowercase();
-    STREAMABLE_TOOLS.iter().any(|t| lower.contains(t))
+    STREAMABLE_TOOLS.contains(&name)
 }
 
 /// Content field keys in streaming JSON args.

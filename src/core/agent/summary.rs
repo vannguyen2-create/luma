@@ -112,52 +112,49 @@ mod tests {
     #[test]
     fn summary_bash() {
         let args = serde_json::json!({"command": "echo hello"});
-        assert_eq!(format_tool_summary("bash", &args), "$ echo hello");
+        assert_eq!(format_tool_summary("Bash", &args), "$ echo hello");
     }
     #[test]
     fn summary_read() {
         let args = serde_json::json!({"path": "/tmp/test.rs"});
-        assert_eq!(format_tool_summary("read", &args), "/tmp/test.rs");
+        assert_eq!(format_tool_summary("Read", &args), "/tmp/test.rs");
     }
     #[test]
     fn result_bash_error() {
         assert_eq!(
-            format_tool_result("bash", "error\n[exit code: 1]"),
+            format_tool_result("Bash", "error\n[exit code: 1]"),
             "exit 1"
         );
     }
     #[test]
-    fn summary_wire_names() {
-        let args = serde_json::json!({"path": "/tmp/test.rs"});
-        assert_eq!(format_tool_summary("Read", &args), "/tmp/test.rs");
-        assert_eq!(format_tool_summary("read_file", &args), "/tmp/test.rs");
+    fn summary_codex_names() {
         let args = serde_json::json!({"command": "ls"});
         assert_eq!(format_tool_summary("exec_command", &args), "$ ls");
     }
     #[test]
     fn summary_glob_grep() {
         let args = serde_json::json!({"pattern": "**/*.rs"});
-        assert_eq!(format_tool_summary("glob", &args), "**/*.rs");
+        assert_eq!(format_tool_summary("Glob", &args), "**/*.rs");
         let args = serde_json::json!({"pattern": "fn main", "include": "*.rs"});
-        assert_eq!(format_tool_summary("grep", &args), "fn main (*.rs)");
+        assert_eq!(format_tool_summary("Grep", &args), "fn main (*.rs)");
     }
     #[test]
     fn result_multiline() {
         assert_eq!(
-            format_tool_result("read", "line1\nline2\nline3"),
+            format_tool_result("Read", "line1\nline2\nline3"),
             "(3 lines)"
         );
     }
     #[test]
     fn result_read_single() {
-        assert_eq!(format_tool_result("read", "only one line"), "");
+        assert_eq!(format_tool_result("Read", "only one line"), "");
     }
     #[test]
     fn result_write_empty() {
-        assert_eq!(format_tool_result("write", "file written"), "");
+        assert_eq!(format_tool_result("Write", "file written"), "");
     }
     #[test]
     fn result_glob() {
-        assert_eq!(format_tool_result("glob", "a\nb\nc"), "(3 lines)");
+        assert_eq!(format_tool_result("Glob", "a\nb\nc"), "(3 lines)");
     }
 }

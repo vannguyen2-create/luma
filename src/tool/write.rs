@@ -12,11 +12,11 @@ use tokio_util::sync::CancellationToken;
 pub struct WriteTool;
 
 impl Tool for WriteTool {
-    fn name(&self) -> &str { "write" }
+    fn name(&self) -> &str { "Write" }
 
     fn schema(&self) -> ToolSchema {
         ToolSchema {
-            name: "write".into(),
+            name: "Write".into(),
             description: concat!(
                 "Create a new file or overwrite an existing file. Creates parent directories if needed.\n",
                 "- For modifying existing files, prefer the `edit` tool — it only sends the diff.\n",
