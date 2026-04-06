@@ -1,5 +1,5 @@
 /// Cell-buffer renderer — regions paint into ScreenBuffer, diff per-row hash.
-use crate::tui::text::{Line, Padding, ScreenBuffer};
+use crate::tui::text::{CellFlag, Line, Padding, ScreenBuffer};
 use crate::tui::theme::Rgb;
 use std::io::{self, BufWriter, Stdout, Write};
 
@@ -205,7 +205,17 @@ impl Renderer {
                 if row >= self.buf.height || col >= self.buf.width {
                     continue;
                 }
+                // If this cell was the trailing half of a wide char,
+                // clear the wide char in the previous cell to avoid artifacts.
+                {
+                    let c = self.buf.get(row, col);
+                    if c.flags.is_wide_pad() && col > 0 {
+                        let p = self.buf.get_mut(row, col - 1);
+                        p.ch = ' ';
+                    }
+                }
                 let c = self.buf.get_mut(row, col);
+                c.flags = CellFlag(CellFlag::NONE);
                 match cell {
                     ScrollCell::Track => {
                         c.ch = '█';

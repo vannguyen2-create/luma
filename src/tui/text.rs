@@ -203,13 +203,11 @@ pub fn display_width(s: &str) -> usize {
 }
 
 /// Terminal display width of a single character.
-/// Uses `unicode-width` (UAX #11) as base, with emoji override for
-/// codepoints that modern terminals render as 2-wide regardless of EAW.
+/// Follows unicode-width (UAX #11) strictly. Some emoji without
+/// Emoji_Presentation may render wider on certain terminals — that's
+/// a terminal-specific behavior we can't reliably predict.
 pub fn char_width(ch: char) -> usize {
     use unicode_width::UnicodeWidthChar;
-    let cp = ch as u32;
-    // Emoji blocks that terminals render 2-wide even when UAX #11 says otherwise
-    if cp >= 0x1F000 { return 2; }
     ch.width().unwrap_or(0)
 }
 

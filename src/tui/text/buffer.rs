@@ -129,6 +129,10 @@ impl ScreenBuffer {
                     continue;
                 }
                 let cw = char_width(ch);
+                // Skip zero-width chars (variation selectors, combining marks).
+                if cw == 0 {
+                    continue;
+                }
                 if x + cw as u16 > max_col {
                     return x - col;
                 }

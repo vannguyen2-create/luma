@@ -25,7 +25,7 @@ use std::time::Duration;
 use tokio::sync::mpsc;
 
 const TICK_INTERVAL: Duration = Duration::from_millis(80);
-const SCROLL_STEP: usize = 1;
+const SCROLL_STEP: usize = 3;
 const ABORT_HINT_TICKS: u8 = 25; // ~2s at 80ms tick
 /// Max events to drain per frame before forcing a render.
 /// Prevents starvation when producers (agent + tick + mouse) keep filling
