@@ -176,13 +176,6 @@ impl OutputLog {
         }));
     }
 
-    /// Add a success message.
-    #[allow(dead_code)]
-    pub fn success(&mut self, text: &str) {
-        self.commit_last();
-        self.push(Block::Success(text.to_owned()));
-    }
-
     /// Add an error message.
     pub fn error(&mut self, text: &str) {
         self.commit_last();
@@ -429,12 +422,6 @@ impl OutputLog {
         false
     }
 
-    /// Get text at a screen row (for copy selection).
-    #[allow(dead_code)]
-    pub fn text_at_row(&self, screen_row: usize, region_row: usize) -> String {
-        let abs = self.scroll.offset + screen_row.saturating_sub(region_row);
-        self.cache.text_at(abs)
-    }
 
     // ════════════════════════════════════════════════════════════════
     // PRIVATE — internal helpers

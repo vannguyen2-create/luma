@@ -28,8 +28,6 @@ pub enum Block {
     /// (lines, precomputed max display width)
     Logo(Vec<String>, usize),
     Info(String),
-    #[allow(dead_code)]
-    Success(String),
     Error(String),
     Warn(String),
     User(Vec<String>),
@@ -149,7 +147,7 @@ pub fn render_block(block: &Block, width: usize, spinner_frame: usize) -> Vec<Li
         }
 
         Block::Info(t) => wrap_simple(icon::INFO, palette::DIM, t, width),
-        Block::Success(t) => wrap_simple(icon::SUCCESS, palette::SUCCESS, t, width),
+
         Block::Error(t) => wrap_simple(icon::ERROR, palette::ERROR, t, width),
         Block::Warn(t) => wrap_simple(icon::WARN, palette::WARN, t, width),
 

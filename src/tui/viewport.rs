@@ -29,8 +29,8 @@ impl Viewport {
         }
     }
 
-    /// Add a pre-rendered block.
-    #[allow(dead_code)]
+    /// Add a pre-rendered block (used by tests).
+    #[cfg(test)]
     pub fn push(&mut self, lines: Vec<Line>) {
         self.offsets.push(self.total);
         self.total += lines.len();
@@ -38,6 +38,21 @@ impl Viewport {
             lines,
             is_dirty: false,
         });
+    }
+
+    /// Get text content at an absolute line index (used by tests).
+    #[cfg(test)]
+    pub fn text_at(&self, abs_line: usize) -> String {
+        if abs_line >= self.total {
+            return String::new();
+        }
+        let bi = self.block_at(abs_line);
+        let local = abs_line - self.offsets[bi];
+        self.blocks[bi]
+            .lines
+            .get(local)
+            .map(|l| l.spans.iter().map(|s| s.text.as_str()).collect())
+            .unwrap_or_default()
     }
 
     /// Add a deferred block (not yet rendered). Marked dirty so refresh()
@@ -167,21 +182,6 @@ impl Viewport {
             return None;
         }
         Some(self.block_at(abs_line))
-    }
-
-    /// Get the text content at an absolute line index.
-    #[allow(dead_code)]
-    pub fn text_at(&self, abs_line: usize) -> String {
-        if abs_line >= self.total {
-            return String::new();
-        }
-        let bi = self.block_at(abs_line);
-        let local = abs_line - self.offsets[bi];
-        self.blocks[bi]
-            .lines
-            .get(local)
-            .map(|l| l.spans.iter().map(|s| s.text.as_str()).collect())
-            .unwrap_or_default()
     }
 
     /// Number of cached blocks.
