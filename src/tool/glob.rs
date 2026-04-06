@@ -1,7 +1,10 @@
-/// Glob tool — fast file pattern matching, native Rust.
+/// Glob tool — fast file pattern matching using `ignore` crate.
+///
+/// Respects `.gitignore`, `.ignore`, skips hidden files by default.
+/// Same engine as ripgrep for consistent, fast directory walking.
 use crate::core::tool::Tool;
 use crate::core::types::ToolSchema;
-use anyhow::Result;
+use anyhow::{bail, Result};
 use std::path::Path;
 use std::pin::Pin;
 use tokio::sync::mpsc;
@@ -9,7 +12,7 @@ use tokio_util::sync::CancellationToken;
 
 const MAX_RESULTS: usize = 200;
 
-/// Native glob tool using globset + directory walking.
+/// Native glob tool using `ignore` crate (ripgrep's walker) + globset matcher.
 pub struct GlobTool;
 
 impl Tool for GlobTool {
@@ -21,7 +24,8 @@ impl Tool for GlobTool {
             description: concat!(
                 "Find files by name pattern. Returns paths sorted by modification time (newest first).\n",
                 "- Patterns: **/*.rs, src/**/*.{ts,tsx}, *test*, src/[a-z]*/*.ts\n",
-                "- Not for searching file contents — use `grep` instead.",
+                "- Respects .gitignore rules. Hidden files are excluded by default.\n",
+                "- Not for searching file contents — use `Grep` instead.",
             ).to_owned(),
             parameters: serde_json::json!({
                 "type": "object",
@@ -55,6 +59,10 @@ impl Tool for GlobTool {
                 std::env::current_dir()?.join(path).to_string_lossy().into_owned()
             };
 
+            if !Path::new(&root).is_dir() {
+                bail!("Directory does not exist: {path}");
+            }
+
             let matcher = globset::GlobBuilder::new(pattern)
                 .literal_separator(false)
                 .build()
@@ -62,8 +70,37 @@ impl Tool for GlobTool {
                 .compile_matcher();
 
             let mut matches: Vec<(String, std::time::SystemTime)> = Vec::new();
+            let root_path = Path::new(&root);
 
-            walk_dir(&root, &matcher, &mut matches, MAX_RESULTS)?;
+            // Walk using `ignore` crate — respects .gitignore, skips hidden,
+            // handles symlinks, parallel-ready.
+            let walker = ignore::WalkBuilder::new(&root)
+                .hidden(true)       // skip hidden files
+                .git_ignore(true)   // respect .gitignore
+                .git_global(true)   // respect global gitignore
+                .git_exclude(true)  // respect .git/info/exclude
+                .build();
+
+            for entry in walker {
+                if matches.len() >= MAX_RESULTS { break; }
+                let entry = match entry {
+                    Ok(e) => e,
+                    Err(_) => continue,
+                };
+                // Skip directories — only match files
+                if entry.file_type().map(|t| t.is_dir()).unwrap_or(true) {
+                    continue;
+                }
+                let entry_path = entry.path();
+                let rel = entry_path.strip_prefix(root_path).unwrap_or(entry_path);
+                if matcher.is_match(rel) {
+                    let mtime = entry.metadata()
+                        .ok()
+                        .and_then(|m| m.modified().ok())
+                        .unwrap_or(std::time::UNIX_EPOCH);
+                    matches.push((rel.to_string_lossy().into_owned(), mtime));
+                }
+            }
 
             // Sort by mtime descending (newest first)
             matches.sort_by(|a, b| b.1.cmp(&a.1));
@@ -77,7 +114,7 @@ impl Tool for GlobTool {
 
             let mut result = files.join("\n");
             if truncated {
-                result.push_str("\n(Results truncated. Use a more specific pattern.)");
+                result.push_str("\n(Results truncated. Use a more specific pattern or path.)");
             }
             if files.is_empty() {
                 result = "No files found".to_owned();
@@ -85,58 +122,6 @@ impl Tool for GlobTool {
             Ok(result)
         })
     }
-}
-
-fn walk_dir(
-    dir: &str,
-    matcher: &globset::GlobMatcher,
-    results: &mut Vec<(String, std::time::SystemTime)>,
-    limit: usize,
-) -> Result<()> {
-    let root = Path::new(dir);
-    walk_recursive(root, root, matcher, results, limit)
-}
-
-fn walk_recursive(
-    root: &Path,
-    dir: &Path,
-    matcher: &globset::GlobMatcher,
-    results: &mut Vec<(String, std::time::SystemTime)>,
-    limit: usize,
-) -> Result<()> {
-    if results.len() >= limit {
-        return Ok(());
-    }
-    let entries = match std::fs::read_dir(dir) {
-        Ok(e) => e,
-        Err(_) => return Ok(()),
-    };
-    for entry in entries.flatten() {
-        if results.len() >= limit {
-            break;
-        }
-        let path = entry.path();
-        let name = path.file_name().unwrap_or_default().to_string_lossy();
-
-        // Skip hidden dirs and common noise
-        if name.starts_with('.') || name == "node_modules" || name == "target" || name == "__pycache__" {
-            continue;
-        }
-
-        if path.is_dir() {
-            walk_recursive(root, &path, matcher, results, limit)?;
-        } else {
-            let rel = path.strip_prefix(root).unwrap_or(&path);
-            if matcher.is_match(rel) {
-                let mtime = path.metadata()
-                    .and_then(|m| m.modified())
-                    .unwrap_or(std::time::UNIX_EPOCH);
-                let display = rel.to_string_lossy().into_owned();
-                results.push((display, mtime));
-            }
-        }
-    }
-    Ok(())
 }
 
 #[cfg(test)]
@@ -159,5 +144,33 @@ mod tests {
         let args = serde_json::json!({"pattern": "**/*.nonexistent_ext"});
         let result = tool.execute(args, tx, CancellationToken::new()).await.unwrap();
         assert_eq!(result, "No files found");
+    }
+
+    #[tokio::test]
+    async fn glob_invalid_dir() {
+        let (tx, _rx) = mpsc::channel(64);
+        let tool = GlobTool;
+        let args = serde_json::json!({"pattern": "**/*", "path": "/nonexistent_dir_xyz"});
+        let result = tool.execute(args, tx, CancellationToken::new()).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn glob_respects_gitignore() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        // ignore crate needs .git dir to recognize .gitignore
+        std::fs::create_dir(root.join(".git")).unwrap();
+        std::fs::write(root.join(".gitignore"), "*.log\n").unwrap();
+        std::fs::write(root.join("keep.rs"), "").unwrap();
+        std::fs::write(root.join("skip.log"), "").unwrap();
+
+        let (tx, _rx) = mpsc::channel(64);
+        let tool = GlobTool;
+        let args = serde_json::json!({"pattern": "**/*", "path": root.to_str().unwrap()});
+        let result = tool.execute(args, tx, CancellationToken::new()).await.unwrap();
+
+        assert!(result.contains("keep.rs"), "should include keep.rs: {result}");
+        assert!(!result.contains("skip.log"), "should exclude skip.log: {result}");
     }
 }
