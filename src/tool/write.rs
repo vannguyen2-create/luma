@@ -51,7 +51,15 @@ impl Tool for WriteTool {
             }
 
             // Read old content for diff (if file exists)
-            let old = std::fs::read_to_string(&path).unwrap_or_default();
+            let old = std::fs::read_to_string(&path).ok();
+            let is_create = old.is_none();
+            let old = old.unwrap_or_default();
+
+            // Skip write if content unchanged
+            if old == content {
+                return Ok(format!("{} is unchanged", path.display()));
+            }
+
             std::fs::write(&path, content)?;
 
             // Send diff lines to UI
@@ -61,7 +69,11 @@ impl Tool for WriteTool {
             }
 
             let total_lines = content.lines().count();
-            Ok(format!("Wrote {} ({total_lines} lines)", path.display()))
+            if is_create {
+                Ok(format!("Created {} ({total_lines} lines)", path.display()))
+            } else {
+                Ok(format!("Updated {} ({total_lines} lines)", path.display()))
+            }
         })
     }
 }
@@ -83,7 +95,7 @@ mod tests {
             tx, cancel,
         ).await.unwrap();
 
-        assert!(result.contains("Wrote"));
+        assert!(result.contains("Created"));
         assert_eq!(std::fs::read_to_string(&file).unwrap(), "hello");
     }
 
