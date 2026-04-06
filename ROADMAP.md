@@ -18,9 +18,9 @@ Current state: 15K lines Rust, 287 tests, 3 providers, 9 tools.
 
 ## v0.3 — Context & Multimodal
 
-- [ ] **@file mention** — type `@` in prompt → autocomplete file paths → inject file content into message context. Highlight `@path` in prompt. Multiple files supported.
-- [ ] **Image attach** — clipboard paste (Alt+V) → base64 encode → multimodal message. Requires `Message.content` → `Vec<ContentBlock>` (text + image). Provider serialization per format.
-- [ ] **Multimodal Message type** — `content: String` → `content: Vec<ContentBlock>` with `Text(String)` and `Image { media_type, base64 }`. Backward-compatible session deserialization.
+- [x] **Multimodal Message type** — `content: String` → `content: Vec<ContentBlock>` with `Text(String)` and `Image { media_type, id }`. Backward-compatible session deserialization via custom serde.
+- [x] **@file mention** — type `@` in prompt → fuzzy autocomplete file paths (ignore-aware) → inject file content into message context. Highlight `@path` in peach. Tab ghost completion.
+- [x] **Image attach** — clipboard paste (Alt+V) → save to session assets → multimodal message. Provider serialization per format (Anthropic base64 source, OpenAI image_url data URI).
 - [ ] URL highlighting in markdown text (bare https:// links colored)
 - [ ] Session management: `/delete`, `/rename`, `/export` commands
 - [ ] `Block::Success` usage — show success messages for session save, compact, reset

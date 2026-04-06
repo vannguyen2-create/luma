@@ -139,6 +139,7 @@ impl App {
         let mut prompt = PromptState::new();
         prompt.add_command("new", "new thread");
         prompt.add_command("model", "switch model");
+        prompt.add_command("resume", "resume last session");
         prompt.add_command("sessions", "browse sessions");
         prompt.add_command("exit", "quit luma");
 
@@ -180,10 +181,6 @@ impl App {
                 ThinkingLevel::High => "high",
             };
             app.ui.status.set_thinking_level(label);
-        }
-        // Auto-resume last session
-        if let Some(session_id) = crate::config::prefs::load_last_session() {
-            app.resume_session(&session_id);
         }
         app
     }

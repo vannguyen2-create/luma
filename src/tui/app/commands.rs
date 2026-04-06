@@ -65,6 +65,14 @@ impl super::App {
                 }
                 Action::Render
             }
+            "resume" => {
+                if let Some(id) = crate::config::prefs::load_last_session() {
+                    self.resume_session(&id);
+                } else {
+                    self.ui.output.info("no previous session");
+                }
+                Action::Render
+            }
             "exit" => Action::Quit,
             _ => {
                 self.ui.output.warn(&format!("unknown command: /{cmd}"));
@@ -145,7 +153,7 @@ impl super::App {
             session
                 .messages
                 .iter()
-                .map(|m| m.content.len())
+                .map(|m| m.text().len())
                 .sum::<usize>() as u64
                 / 4
         };
@@ -203,14 +211,14 @@ impl super::App {
                         self.turn_divider(turn_durations, turn_idx.wrapping_sub(2));
                     }
                     seen_user = true;
-                    self.ui.output.user_message(&msg.content);
+                    self.ui.output.user_message(msg.display_text());
                 }
                 Role::Assistant => {
                     if i < render_from {
                         continue;
                     }
-                    if !msg.content.is_empty() {
-                        self.ui.output.assistant_message(&msg.content);
+                    if msg.has_text() {
+                        self.ui.output.assistant_message(&msg.text());
                     }
                     if let Some(tcs) = &msg.tool_calls {
                         for tc in tcs {
