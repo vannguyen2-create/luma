@@ -5,6 +5,39 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.0] - 2026-04-06
+
+### Added
+- **Web search** with capability-based server tool architecture
+  - Built-in server search: Anthropic (`web_search_20250305`), Codex (`web_search`)
+  - Client-side fallback: Exa, Tavily, SearXNG adapters (via `EXA_API_KEY`, `TAVILY_API_KEY`, `SEARXNG_URL`)
+  - Unified UI: query shown immediately, 1-line results with title and domain
+- **Read tool**: file size guard (10MB), binary file detection, "did you mean?" suggestions, BOM handling, total line count
+- **Edit tool**: curly-quote normalization, file size guard, "did you mean?" suggestions, skip unchanged files
+- **Write tool**: skip unchanged files, distinguish "Created" vs "Updated" in response
+- **Bash tool**: head+tail output truncation (preserves errors at end), deadline-based timeout
+- **Glob/Grep**: `ignore` crate integration (respects `.gitignore`, skips hidden/binary files)
+- Syntax highlighting for tool diff blocks with language detection from file path
+- Function/method call coloring in code highlighting
+- JS builtins (`console`, `Promise`, `Array`, etc.) as highlighted keywords
+- Emoji rule enforced across all prompt modes including Rush
+
+### Changed
+- **Tool naming**: tools carry API-native names directly (`Read`, `Write`, `Edit`, `Bash`, `Glob`, `Grep` for Claude; `exec_command`, `apply_patch` for Codex) — no wire name mapping layer
+- **Registry**: simplified from 95 to 50 lines; removed `wire_name_map`, `wire_to_canonical`, `canonical_to_wire`, `set_wire_names`
+- **Server tools**: capability-based architecture — Registry declares capabilities, each Provider maps to its native schema format at call time
+- **Prompt system**: extracted to template files (`src/config/prompt/`), shared sections composed via `include_str!` + `{tools}` placeholders
+- **Tool icons**: simplified to two types — `->` (read/output tools) and `<-` (write/input tools)
+- `BashTool` parameterized for dual naming: `BashTool::claude()` / `BashTool::codex()`
+- Edit tool uses single scan instead of `contains()` + `matches().count()`
+- Write/Edit diff output uses `send().await` instead of `try_send` (no more silent data loss)
+
+### Fixed
+- Tool diff blocks not showing syntax highlighting or background colors (wire name case mismatch)
+- Bash timeout resetting on each output chunk (now uses fixed deadline)
+- Read tool loading entire file into memory for large files with offset (now uses `BufReader`)
+- Long lines in Read output not truncated (now capped at 2000 chars)
+
 ## [0.1.0] - 2026-04-05
 
 ### Added
