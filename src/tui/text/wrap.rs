@@ -57,6 +57,10 @@ pub fn wrap_line(line: &Line, width: usize, cont_pad: Option<&str>) -> Vec<Line>
             break;
         }
 
+        if end_ci == ci {
+            // Single char wider than line — force advance to avoid infinite loop
+            end_ci = ci + 1;
+        }
         let min_ci = ci + (end_ci - ci) * 3 / 10;
         let break_ci = last_space_ci.filter(|&s| s > min_ci).unwrap_or(end_ci);
         let byte_start = chars[ci].0;

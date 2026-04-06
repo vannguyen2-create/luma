@@ -72,17 +72,23 @@ fn parse_inline_inner(text: &str, streaming: bool) -> SmallVec<[Span; 4]> {
         }
 
         // ~~strikethrough~~
-        if bytes[pos] == b'~' && pos + 1 < bytes.len() && bytes[pos + 1] == b'~' {
-            if let Some(end) = text[pos + 2..].find("~~") {
-                spans.push(Span::new(
-                    text[pos + 2..pos + 2 + end].to_owned(),
-                    palette::MUTED,
-                ));
-                pos = pos + 2 + end + 2;
+        if bytes[pos] == b'~' {
+            if pos + 1 < bytes.len() && bytes[pos + 1] == b'~' {
+                if let Some(end) = text[pos + 2..].find("~~") {
+                    spans.push(Span::new(
+                        text[pos + 2..pos + 2 + end].to_owned(),
+                        palette::MUTED,
+                    ));
+                    pos = pos + 2 + end + 2;
+                    continue;
+                }
+                spans.push(Span::new("~~".to_owned(), palette::FG));
+                pos += 2;
                 continue;
             }
-            spans.push(Span::new("~~".to_owned(), palette::FG));
-            pos += 2;
+            // Single ~ — treat as plain text
+            spans.push(Span::new("~".to_owned(), palette::FG));
+            pos += 1;
             continue;
         }
 
@@ -191,5 +197,19 @@ mod tests {
         let spans = parse_inline("hello ~~removed~~ end");
         assert_eq!(spans[1].text, "removed");
         assert_eq!(spans[1].fg, palette::MUTED);
+    }
+
+    #[test]
+    fn single_tilde_plain_text() {
+        let spans = parse_inline("~15K dòng Rust");
+        let all: String = spans.iter().map(|s| s.text.as_str()).collect();
+        assert_eq!(all, "~15K dòng Rust");
+    }
+
+    #[test]
+    fn tilde_in_sentence() {
+        let spans = parse_inline("project có ~15K dòng, ~200 files");
+        let all: String = spans.iter().map(|s| s.text.as_str()).collect();
+        assert_eq!(all, "project có ~15K dòng, ~200 files");
     }
 }

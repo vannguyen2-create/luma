@@ -175,7 +175,8 @@ impl super::App {
     /// Handle keyboard input — escape, picker, tab, prompt keys.
     pub(super) fn on_key(&mut self, key: KeyEvent) -> Action {
         crate::dbg_log!("key {:?} state={:?}", key, self.agent.state);
-        if key == KeyEvent::Escape {
+        // Escape or Ctrl+C during streaming → abort agent
+        if key == KeyEvent::Escape || key == KeyEvent::CtrlC {
             if self.agent.state == RunState::PendingAbort {
                 self.agent.state = RunState::Aborting;
                 self.ui.output.abort();
@@ -189,8 +190,7 @@ impl super::App {
                 self.agent.abort_countdown = ABORT_HINT_TICKS;
                 return Action::Render;
             }
-            // While aborting or any non-idle agent state, swallow Escape
-            if self.agent.state != RunState::Idle {
+            if key == KeyEvent::Escape && self.agent.state != RunState::Idle {
                 return Action::Continue;
             }
         }
@@ -222,6 +222,10 @@ impl super::App {
             PromptAction::Interrupt => Action::Quit,
             PromptAction::ToggleThinking => {
                 self.cycle_thinking();
+                Action::Render
+            }
+            PromptAction::PasteImage => {
+                self.paste_clipboard_image();
                 Action::Render
             }
         }

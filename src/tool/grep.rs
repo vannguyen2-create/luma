@@ -177,11 +177,15 @@ struct FileMatch {
 mod tests {
     use super::*;
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn grep_finds_pattern() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        std::fs::write(root.join("main.rs"), "fn main() {}\n").unwrap();
+
         let (tx, _rx) = mpsc::channel(64);
         let tool = GrepTool;
-        let args = serde_json::json!({"pattern": "fn main", "path": "src", "include": "*.rs"});
+        let args = serde_json::json!({"pattern": "fn main", "path": root.to_str().unwrap()});
         let result = tool.execute(args, tx, CancellationToken::new()).await.unwrap();
         assert!(result.contains("fn main"));
     }
@@ -198,13 +202,19 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn grep_with_include() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        std::fs::write(root.join("lib.rs"), "pub struct Foo;\nfn bar() {}\n").unwrap();
+        std::fs::write(root.join("main.py"), "class Foo: pass\n").unwrap();
+
         let (tx, _rx) = mpsc::channel(64);
         let tool = GrepTool;
-        let args = serde_json::json!({"pattern": "pub struct", "include": "*.rs"});
+        let args = serde_json::json!({"pattern": "pub struct", "include": "*.rs", "path": root.to_str().unwrap()});
         let result = tool.execute(args, tx, CancellationToken::new()).await.unwrap();
         assert!(result.contains("pub struct"));
+        assert!(!result.contains("main.py"));
     }
 
     #[tokio::test]

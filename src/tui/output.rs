@@ -1070,4 +1070,19 @@ mod tests {
     }
 
 
+    #[test]
+    fn render_history_with_expanded_file() {
+        let mut log = OutputLog::new(80, 20);
+        // Simulate render_history with expanded @file content
+        let user_text = "\n<file path=\"ROADMAP.md\">\n```md\n# Roadmap\n\n## v0.2 — Done\n\n- [x] Tool diff\n- [x] Wire name removal\n```\n</file>\n đây là gì";
+        log.user_message(user_text);
+        log.divider();
+        log.assistant_message("This is a roadmap file.");
+        pf(&mut log);
+        let (total, _, _) = log.scroll_info();
+        assert!(total > 0, "output should have content, got {total} lines");
+        // Verify we can iterate visible lines without panic
+        let count = log.visible_iter().count();
+        assert!(count > 0, "visible lines should exist");
+    }
 }
