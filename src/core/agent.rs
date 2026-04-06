@@ -47,20 +47,35 @@ async fn agent_loop(
     let mut session = Session::new();
 
     if !config.system_prompt.is_empty() {
-        session.messages.push(Message {
-            role: Role::System,
-            content: config.system_prompt.clone(),
-            tool_call_id: None,
-            tool_calls: None,
-        });
+        session.messages.push(Message::system(config.system_prompt.clone()));
     }
 
     while let Some(cmd) = cmd_rx.recv().await {
         match cmd {
-            AgentCommand::Chat { text, cancel } => {
+            AgentCommand::Chat { text, images, files, cancel } => {
+                // Build user message: original text (with @path refs intact)
+                let mut content = vec![crate::core::types::ContentBlock::Text { text }];
+                // Append file contents as separate text blocks
+                for f in files {
+                    let ext = std::path::Path::new(&f.path)
+                        .extension()
+                        .and_then(|e| e.to_str())
+                        .unwrap_or("");
+                    content.push(crate::core::types::ContentBlock::Text {
+                        text: format!("<file path=\"{}\">\n```{ext}\n{}\n```\n</file>", f.path, f.content),
+                    });
+                }
+                for img in images {
+                    let ext = img.media_type.rsplit('/').next().unwrap_or("png");
+                    let id = crate::core::session::save_image(&session.id, &img.data, ext);
+                    content.push(crate::core::types::ContentBlock::Image {
+                        media_type: img.media_type,
+                        id,
+                    });
+                }
                 session.messages.push(Message {
                     role: Role::User,
-                    content: text,
+                    content,
                     tool_call_id: None,
                     tool_calls: None,
                 });
@@ -99,27 +114,16 @@ async fn agent_loop(
                 session.save();
                 session = Session::new();
                 if !config.system_prompt.is_empty() {
-                    session.messages.push(Message {
-                        role: Role::System,
-                        content: config.system_prompt.clone(),
-                        tool_call_id: None,
-                        tool_calls: None,
-                    });
+                    session.messages.push(Message::system(config.system_prompt.clone()));
                 }
             }
             AgentCommand::LoadSession { session: loaded } => {
                 session.save();
                 session = loaded;
-                // Re-inject system prompt if missing
                 if !config.system_prompt.is_empty()
-                    && !session.messages.first().is_some_and(|m| m.role == Role::System)
+                    && !session.messages.first().is_some_and(|m| m.role == crate::core::types::Role::System)
                 {
-                    session.messages.insert(0, Message {
-                        role: Role::System,
-                        content: config.system_prompt.clone(),
-                        tool_call_id: None,
-                        tool_calls: None,
-                    });
+                    session.messages.insert(0, Message::system(config.system_prompt.clone()));
                 }
             }
             AgentCommand::SetModel { model_id, source } => {
@@ -173,12 +177,7 @@ fn fix_orphaned_tool_uses(messages: &mut Vec<Message>) {
     // Add placeholder results for any missing tool_use ids.
     for id in &expected_ids {
         if !existing_ids.contains(id) {
-            messages.push(Message {
-                role: Role::Tool,
-                content: "[aborted]".into(),
-                tool_call_id: Some(id.clone()),
-                tool_calls: None,
-            });
+            messages.push(Message::tool(id.clone(), "[aborted]"));
         }
     }
 }

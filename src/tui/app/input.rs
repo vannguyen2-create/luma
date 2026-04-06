@@ -139,6 +139,9 @@ fn try_parse_event(buf: &[u8]) -> ParseResult {
         if buf[1] == b'\r' {
             return ParseResult::Event(Event::Key(KeyEvent::AltEnter), 2);
         }
+        if buf[1] == b'v' {
+            return ParseResult::Event(Event::Key(KeyEvent::AltV), 2);
+        }
         if buf[1] != b'[' {
             return ParseResult::Event(Event::Key(KeyEvent::Escape), 1);
         }

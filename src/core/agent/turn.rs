@@ -2,7 +2,7 @@
 use super::AgentConfig;
 use crate::core::provider::Provider;
 use crate::core::registry::Registry;
-use crate::core::types::{Message, Role, ToolCall};
+use crate::core::types::{Message, ToolCall};
 use crate::event::Event;
 use anyhow::Result;
 use tokio::sync::mpsc;
@@ -31,7 +31,7 @@ pub async fn run_chat_turn(
     let auth = auth::resolve(provider_kind).await?;
     let provider = build_provider(config, &auth, session_id);
 
-    match run_turn(messages, &*provider, registry, session_usage, tx, cancel.clone()).await {
+    match run_turn(messages, &*provider, registry, session_id, session_usage, tx, cancel.clone()).await {
         Ok(()) => Ok(()),
         Err(e) if e.to_string().contains("401") || e.to_string().contains("Unauthorized") => {
             let _ = tx
@@ -43,7 +43,7 @@ pub async fn run_chat_turn(
             auth::clear_cached(provider_kind);
             let auth = auth::resolve(provider_kind).await?;
             let provider = build_provider(config, &auth, session_id);
-            run_turn(messages, &*provider, registry, session_usage, tx, cancel).await
+            run_turn(messages, &*provider, registry, session_id, session_usage, tx, cancel).await
         }
         Err(e) => Err(e),
     }
@@ -84,18 +84,20 @@ async fn run_turn(
     messages: &mut Vec<Message>,
     provider: &dyn Provider,
     registry: &Registry,
+    session_id: &str,
     session_usage: &mut crate::core::session::SessionUsage,
     tx: &mpsc::Sender<Event>,
     cancel: tokio_util::sync::CancellationToken,
 ) -> Result<()> {
     let schemas = registry.schemas();
     let server_schemas = provider.server_tool_schemas(registry.server_capabilities());
+    let resolve_image = crate::core::session::image_resolver(session_id);
 
     for _ in 0..MAX_ITERATIONS {
         if cancel.is_cancelled() { anyhow::bail!("Aborted"); }
 
         let (response, usage) = provider
-            .stream(messages, &schemas, &server_schemas, tx.clone(), cancel.clone())
+            .stream(messages, &schemas, &server_schemas, &*resolve_image, tx.clone(), cancel.clone())
             .await?;
 
         session_usage.input_tokens += usage.input_tokens;
@@ -122,12 +124,7 @@ async fn run_turn(
                 truncated.truncate(MAX_RESULT_LEN);
                 truncated.push_str("\n[truncated]");
             }
-            messages.push(Message {
-                role: Role::Tool,
-                content: truncated,
-                tool_call_id: Some(tc_id),
-                tool_calls: None,
-            });
+            messages.push(Message::tool(tc_id, truncated));
         }
     }
     Ok(())

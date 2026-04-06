@@ -1,13 +1,20 @@
-/// Input prompt — handles keystrokes, paste, history, command completion.
+/// Input prompt — handles keystrokes, paste, history, autocomplete.
+mod completion;
+
 use crate::event::KeyEvent;
 use crate::tui::text::{Line, Span};
 use crate::tui::theme::palette;
+use completion::{dropdown_line, highlight_at_refs, Completion};
 use smallvec::smallvec;
 
-/// A registered slash command.
-pub struct Command {
-    pub name: String,
-    pub desc: String,
+pub use completion::Command;
+
+/// An image attached to the prompt.
+#[derive(Clone)]
+pub struct AttachedImage {
+    pub media_type: String,
+    pub data: Vec<u8>,
+    pub label: String,
 }
 
 /// Prompt result after handling a key.
@@ -17,6 +24,7 @@ pub enum PromptAction {
     Submit(String),
     Interrupt,
     ToggleThinking,
+    PasteImage,
 }
 
 /// Input prompt state.
@@ -25,8 +33,9 @@ pub struct PromptState {
     cursor: usize,
     history: Vec<String>,
     history_idx: Option<usize>,
-    commands: Vec<Command>,
     paste: Option<String>,
+    pub images: Vec<AttachedImage>,
+    comp: Completion,
 }
 
 impl PromptState {
@@ -37,25 +46,39 @@ impl PromptState {
             cursor: 0,
             history: Vec::new(),
             history_idx: None,
-            commands: Vec::new(),
             paste: None,
+            images: Vec::new(),
+            comp: Completion::new(),
         }
     }
 
     /// Register a slash command.
     pub fn add_command(&mut self, name: impl Into<String>, desc: impl Into<String>) {
-        self.commands.push(Command {
+        self.comp.commands.push(Command {
             name: name.into(),
             desc: desc.into(),
         });
     }
 
-    /// Cursor column position for the renderer (icon + space + visible cursor pos).
+    /// Attach an image to the current prompt.
+    pub fn attach_image(&mut self, media_type: String, data: Vec<u8>, label: String) {
+        self.images.push(AttachedImage {
+            media_type,
+            data,
+            label,
+        });
+    }
+
+    /// Take and clear attached images (called on submit).
+    pub fn take_images(&mut self) -> Vec<AttachedImage> {
+        std::mem::take(&mut self.images)
+    }
+
+    /// Cursor column position for the renderer.
     pub fn cursor_column(&self) -> usize {
         if self.paste.is_some() {
             return 0;
         }
-        // For multiline buffer, cursor col is relative to last line
         let before_cursor: String = self.buffer.chars().take(self.cursor).collect();
         use crate::tui::text::display_width;
         before_cursor
@@ -71,7 +94,6 @@ impl PromptState {
 
     /// Handle a key event. Returns what the app should do.
     pub fn handle_key(&mut self, key: KeyEvent) -> PromptAction {
-        // Paste preview mode — only Enter/Escape/CtrlC
         if self.paste.is_some() {
             return match key {
                 KeyEvent::Enter => self.submit_paste(),
@@ -81,6 +103,33 @@ impl PromptState {
                 }
                 _ => PromptAction::None,
             };
+        }
+
+        // Dropdown navigation intercepts arrow keys, Tab, Enter
+        if self.has_dropdown() {
+            match key {
+                KeyEvent::ArrowUp => {
+                    self.comp.dropdown_idx = self.comp.dropdown_idx.saturating_sub(1);
+                    return PromptAction::Redraw;
+                }
+                KeyEvent::ArrowDown => {
+                    let count = self.dropdown_count();
+                    self.comp.dropdown_idx =
+                        (self.comp.dropdown_idx + 1).min(count.saturating_sub(1));
+                    return PromptAction::Redraw;
+                }
+                KeyEvent::Tab | KeyEvent::Enter => {
+                    self.accept_dropdown();
+                    return PromptAction::Redraw;
+                }
+                KeyEvent::Escape => {
+                    self.buffer.clear();
+                    self.cursor = 0;
+                    self.comp.dropdown_idx = 0;
+                    return PromptAction::Redraw;
+                }
+                _ => {}
+            }
         }
 
         match key {
@@ -115,6 +164,7 @@ impl PromptState {
                     self.buffer.replace_range(byte_pos..next_byte, "");
                     self.cursor -= 1;
                 }
+                self.comp.dropdown_idx = 0;
                 PromptAction::Redraw
             }
             KeyEvent::ArrowUp => self.history_prev(),
@@ -145,6 +195,10 @@ impl PromptState {
                 let byte_pos = self.char_to_byte(self.cursor);
                 self.buffer.insert(byte_pos, c);
                 self.cursor += 1;
+                self.comp.dropdown_idx = 0;
+                if c == '@' {
+                    self.comp.refresh_file_cache();
+                }
                 PromptAction::Redraw
             }
             KeyEvent::AltEnter => {
@@ -157,21 +211,8 @@ impl PromptState {
                 self.insert_paste(text);
                 PromptAction::Redraw
             }
+            KeyEvent::AltV => PromptAction::PasteImage,
         }
-    }
-
-    /// Number of chars in buffer.
-    fn char_count(&self) -> usize {
-        self.buffer.chars().count()
-    }
-
-    /// Convert char index to byte index.
-    fn char_to_byte(&self, char_idx: usize) -> usize {
-        self.buffer
-            .char_indices()
-            .nth(char_idx)
-            .map(|(i, _)| i)
-            .unwrap_or(self.buffer.len())
     }
 
     /// Render the prompt lines.
@@ -203,7 +244,7 @@ impl PromptState {
         if line_count > 1 {
             let last_line = self.buffer.lines().last().unwrap_or("");
             return vec![
-                Line::new(smallvec![Span::new(last_line.to_owned(), palette::FG),]),
+                Line::new(smallvec![Span::new(last_line.to_owned(), palette::FG)]),
                 Line::new(smallvec![
                     Span::new(format!("{line_count} lines "), palette::DIM),
                     Span::new("enter", palette::ACCENT),
@@ -213,15 +254,52 @@ impl PromptState {
                 ]),
             ];
         }
-        let mut spans = smallvec![Span::new(self.buffer.clone(), palette::FG),];
+        let mut spans = highlight_at_refs(&self.buffer);
         if !ghost.is_empty() {
             spans.push(Span::new(ghost, palette::MUTED));
         }
-        vec![Line::new(spans)]
+        let mut lines = vec![Line::new(spans)];
+        if !self.images.is_empty() {
+            let labels: Vec<String> = self
+                .images
+                .iter()
+                .map(|img| format!("[{}]", img.label))
+                .collect();
+            lines.push(Line::new(smallvec![
+                Span::new(labels.join(" "), palette::DIM),
+                Span::new("  alt+v", palette::ACCENT),
+                Span::new(" add image", palette::DIM),
+            ]));
+        }
+        lines
     }
 
-    /// Render command dropdown if in command mode.
+    /// Render dropdown for commands or @file autocomplete.
     pub fn dropdown(&self) -> Vec<Line> {
+        use crate::tui::theme::icon;
+        let bar = icon::PROMPT;
+
+        if let Some(query) = self.at_file_query() {
+            let matches = self.comp.file_matches(&query);
+            if matches.is_empty() {
+                return Vec::new();
+            }
+            return matches
+                .iter()
+                .enumerate()
+                .take(8)
+                .map(|(i, path)| {
+                    dropdown_line(
+                        bar,
+                        &format!("@{path}"),
+                        "",
+                        i == self.comp.dropdown_idx,
+                        palette::FILE_REF,
+                    )
+                })
+                .collect();
+        }
+
         let matches = self.get_matches();
         if matches.is_empty() {
             return Vec::new();
@@ -229,17 +307,86 @@ impl PromptState {
         let max_name = matches.iter().map(|c| c.name.len()).max().unwrap_or(0);
         matches
             .iter()
-            .map(|c| {
+            .enumerate()
+            .map(|(i, c)| {
                 let pad = max_name - c.name.len();
-                Line::new(smallvec![
-                    Span::new(format!("/{}", c.name), palette::ACCENT),
-                    Span::new(format!("{}  {}", " ".repeat(pad), c.desc), palette::DIM),
-                ])
+                dropdown_line(
+                    bar,
+                    &format!("/{}", c.name),
+                    &format!("{}  {}", " ".repeat(pad), c.desc),
+                    i == self.comp.dropdown_idx,
+                    palette::ACCENT,
+                )
             })
             .collect()
     }
 
+    // ── Dropdown ──
+
+    /// Whether any dropdown is visible.
+    fn has_dropdown(&self) -> bool {
+        if let Some(q) = self.at_file_query() {
+            return !self.comp.file_matches(&q).is_empty();
+        }
+        if self.is_command_mode() {
+            let matches = self.get_matches();
+            if matches.is_empty() {
+                return false;
+            }
+            if matches.len() == 1 && matches[0].name == self.command_query() {
+                return false;
+            }
+            return true;
+        }
+        false
+    }
+
+    /// Number of items in current dropdown.
+    fn dropdown_count(&self) -> usize {
+        if let Some(q) = self.at_file_query() {
+            return self.comp.file_matches(&q).len().min(8);
+        }
+        if self.is_command_mode() {
+            return self.get_matches().len();
+        }
+        0
+    }
+
+    /// Accept the currently selected dropdown item.
+    fn accept_dropdown(&mut self) {
+        if let Some(query) = self.at_file_query() {
+            let matches = self.comp.file_matches(&query);
+            if let Some(path) = matches.get(self.comp.dropdown_idx) {
+                let before: String = self.buffer.chars().take(self.cursor).collect();
+                if let Some(at_pos) = before.rfind('@') {
+                    let after: String = self.buffer.chars().skip(self.cursor).collect();
+                    self.buffer = format!("{}@{} {}", &before[..at_pos], path, after);
+                    self.cursor = before[..at_pos].chars().count() + 1 + path.chars().count() + 1;
+                }
+            }
+        } else if self.is_command_mode() {
+            let matches = self.get_matches();
+            if let Some(cmd) = matches.get(self.comp.dropdown_idx) {
+                self.buffer = format!("/{}", cmd.name);
+                self.cursor = self.char_count();
+            }
+        }
+        self.comp.dropdown_idx = 0;
+    }
+
     // ── Private ──
+
+    fn char_count(&self) -> usize {
+        self.buffer.chars().count()
+    }
+
+    fn char_to_byte(&self, char_idx: usize) -> usize {
+        self.buffer
+            .char_indices()
+            .nth(char_idx)
+            .map(|(i, _)| i)
+            .unwrap_or(self.buffer.len())
+    }
 
     fn is_command_mode(&self) -> bool {
         self.buffer.starts_with('/')
@@ -252,18 +399,36 @@ impl PromptState {
         if !self.is_command_mode() {
             return Vec::new();
         }
-        let q = self.command_query().to_lowercase();
-        if q.is_empty() {
-            self.commands.iter().collect()
-        } else {
-            self.commands
-                .iter()
-                .filter(|c| c.name.starts_with(&q))
-                .collect()
+        self.comp.command_matches(self.command_query())
+    }
+
+    /// Extract @file query at cursor position.
+    fn at_file_query(&self) -> Option<String> {
+        let before: String = self.buffer.chars().take(self.cursor).collect();
+        let at_pos = before.rfind('@')?;
+        if at_pos > 0 && !before.as_bytes()[at_pos - 1].is_ascii_whitespace() {
+            return None;
         }
+        let query = &before[at_pos + 1..];
+        if query.contains(char::is_whitespace) {
+            return None;
+        }
+        Some(query.to_owned())
+    }
+
+    /// Fuzzy match files (delegates to Completion).
+    fn file_matches(&self, query: &str) -> Vec<String> {
+        self.comp.file_matches(query)
     }
 
     fn ghost(&self) -> String {
+        if let Some(query) = self.at_file_query() {
+            let matches = self.file_matches(&query);
+            if matches.len() == 1 && matches[0] != query {
+                return matches[0][query.len()..].to_owned();
+            }
+            return String::new();
+        }
         if !self.is_command_mode() {
             return String::new();
         }
@@ -281,8 +446,9 @@ impl PromptState {
     fn apply_ghost(&mut self) {
         let g = self.ghost();
         if !g.is_empty() {
-            self.buffer.push_str(&g);
-            self.cursor = self.char_count();
+            let byte_pos = self.char_to_byte(self.cursor);
+            self.buffer.insert_str(byte_pos, &g);
+            self.cursor += g.chars().count();
         }
     }
 
@@ -290,13 +456,11 @@ impl PromptState {
         const PASTE_PREVIEW_THRESHOLD: usize = 5;
         let line_count = text.lines().count();
         if line_count < PASTE_PREVIEW_THRESHOLD {
-            // Short paste — insert directly into buffer
             let byte_pos = self.char_to_byte(self.cursor);
             let trimmed = text.trim_end_matches('\n');
             self.buffer.insert_str(byte_pos, trimmed);
             self.cursor += trimmed.chars().count();
         } else {
-            // Long paste — show preview
             let combined = if self.buffer.is_empty() {
                 text
             } else {
@@ -328,7 +492,7 @@ impl PromptState {
                 return PromptAction::Redraw;
             }
             let query = self.command_query().to_owned();
-            let found = self.commands.iter().any(|c| c.name == query);
+            let found = self.comp.commands.iter().any(|c| c.name == query);
             self.buffer.clear();
             self.cursor = 0;
             if found {
@@ -336,12 +500,10 @@ impl PromptState {
             }
             return PromptAction::Redraw;
         }
-
         let text = self.buffer.trim().to_owned();
         if text.is_empty() {
             return PromptAction::Redraw;
         }
-
         self.history.push(text.clone());
         self.history_idx = None;
         self.buffer.clear();
@@ -356,8 +518,10 @@ impl PromptState {
         if self.history_idx.is_none() && !self.buffer.is_empty() {
             return PromptAction::Redraw;
         }
-        let idx = self.history_idx.unwrap_or(self.history.len());
-        let idx = idx.saturating_sub(1);
+        let idx = self
+            .history_idx
+            .unwrap_or(self.history.len())
+            .saturating_sub(1);
         self.history_idx = Some(idx);
         self.buffer = self.history.get(idx).cloned().unwrap_or_default();
         self.cursor = self.char_count();
@@ -412,7 +576,6 @@ mod tests {
         p.handle_key(KeyEvent::Enter);
         type_str(&mut p, "second");
         p.handle_key(KeyEvent::Enter);
-
         p.handle_key(KeyEvent::ArrowUp);
         assert_eq!(p.buffer, "second");
         p.handle_key(KeyEvent::ArrowUp);
@@ -425,7 +588,7 @@ mod tests {
         type_str(&mut p, "first");
         p.handle_key(KeyEvent::Enter);
         type_str(&mut p, "x");
-        p.handle_key(KeyEvent::ArrowUp); // should NOT navigate
+        p.handle_key(KeyEvent::ArrowUp);
         assert_eq!(p.buffer, "x");
     }
 
@@ -539,7 +702,6 @@ mod tests {
         p.handle_key(KeyEvent::AltEnter);
         type_str(&mut p, "line2");
         assert_eq!(p.buffer, "line1\nline2");
-        assert!(p.buffer.lines().count() == 2);
     }
 
     #[test]
@@ -548,6 +710,90 @@ mod tests {
         type_str(&mut p, "abc");
         p.handle_key(KeyEvent::AltEnter);
         type_str(&mut p, "xy");
-        assert_eq!(p.cursor_column(), 2); // "xy"
+        assert_eq!(p.cursor_column(), 2);
+    }
+
+    #[test]
+    fn at_file_query_detected() {
+        let mut p = PromptState::new();
+        type_str(&mut p, "check @src/");
+        assert_eq!(p.at_file_query(), Some("src/".into()));
+    }
+
+    #[test]
+    fn at_file_query_none_without_at() {
+        let mut p = PromptState::new();
+        type_str(&mut p, "hello world");
+        assert_eq!(p.at_file_query(), None);
+    }
+
+    #[test]
+    fn at_file_query_email_ignored() {
+        let mut p = PromptState::new();
+        type_str(&mut p, "user@example.com ");
+        assert_eq!(p.at_file_query(), None);
+    }
+
+    #[test]
+    fn at_file_cache_populated() {
+        let mut p = PromptState::new();
+        type_str(&mut p, "@");
+        assert!(p.comp.file_cache_valid);
+        assert!(!p.comp.file_cache.is_empty());
+        assert!(p.comp.file_cache.iter().any(|f| f == "Cargo.toml"));
+    }
+
+    #[test]
+    fn at_file_matches_filters() {
+        let mut p = PromptState::new();
+        type_str(&mut p, "@");
+        let matches = p.file_matches("Cargo");
+        assert!(!matches.is_empty());
+        assert!(matches[0].starts_with("Cargo"));
+    }
+
+    #[test]
+    fn dropdown_arrow_navigates() {
+        let mut p = PromptState::new();
+        p.add_command("model", "switch model");
+        p.add_command("new", "new thread");
+        type_str(&mut p, "/");
+        assert!(p.has_dropdown());
+        assert_eq!(p.comp.dropdown_idx, 0);
+        p.handle_key(KeyEvent::ArrowDown);
+        assert_eq!(p.comp.dropdown_idx, 1);
+        p.handle_key(KeyEvent::ArrowUp);
+        assert_eq!(p.comp.dropdown_idx, 0);
+    }
+
+    #[test]
+    fn dropdown_enter_accepts() {
+        let mut p = PromptState::new();
+        p.add_command("model", "switch model");
+        p.add_command("new", "new thread");
+        type_str(&mut p, "/");
+        p.handle_key(KeyEvent::ArrowDown);
+        p.handle_key(KeyEvent::Enter);
+        assert_eq!(p.buffer, "/new");
+    }
+
+    #[test]
+    fn dropdown_resets_on_typing() {
+        let mut p = PromptState::new();
+        p.add_command("model", "switch model");
+        p.add_command("new", "new thread");
+        type_str(&mut p, "/");
+        p.handle_key(KeyEvent::ArrowDown);
+        assert_eq!(p.comp.dropdown_idx, 1);
+        p.handle_key(KeyEvent::Char('m'));
+        assert_eq!(p.comp.dropdown_idx, 0);
+    }
+
+    #[test]
+    fn command_exact_match_no_dropdown() {
+        let mut p = PromptState::new();
+        p.add_command("new", "new thread");
+        type_str(&mut p, "/new");
+        assert!(!p.has_dropdown());
     }
 }

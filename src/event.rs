@@ -21,6 +21,7 @@ pub enum KeyEvent {
     ArrowRight,
     Paste(String),
     AltEnter,
+    AltV,
 }
 
 /// Mouse button identity.
@@ -115,11 +116,25 @@ pub enum Event {
     Tick,
 }
 
+/// An image attachment — raw bytes, saved by agent to session dir.
+pub struct ImageAttach {
+    pub media_type: String,
+    pub data: Vec<u8>,
+}
+
+/// A file reference attached to a message (content read at send time).
+pub struct FileAttach {
+    pub path: String,
+    pub content: String,
+}
+
 /// Commands sent from App to the agent loop task.
 pub enum AgentCommand {
     /// Run a user turn. Agent pushes user message, calls provider, runs tools.
     Chat {
         text: String,
+        images: Vec<ImageAttach>,
+        files: Vec<FileAttach>,
         cancel: tokio_util::sync::CancellationToken,
     },
     /// Reset conversation (new thread). Clears all non-system messages.

@@ -27,6 +27,8 @@ pub mod palette {
     pub const DIFF_DEL_BG: Rgb = Rgb(55, 25, 30);
     pub const DIFF_NUM: Rgb = Rgb(69, 71, 90);
 
+    pub const FILE_REF: Rgb = PEACH;
+
     pub const MODE_RUSH: Rgb = WARN;
     pub const MODE_SMART: Rgb = ACCENT;
     pub const MODE_DEEP: Rgb = SUCCESS;
