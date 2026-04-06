@@ -1,15 +1,133 @@
 /// Core types shared across agent, provider, and tool modules.
 use serde::{Deserialize, Serialize};
 
+/// A content block within a message.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum ContentBlock {
+    Text { text: String },
+    Image { media_type: String, id: String },
+}
+
 /// A chat message in the conversation history.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Message {
     pub role: Role,
-    pub content: String,
+    #[serde(deserialize_with = "deserialize_content")]
+    pub content: Vec<ContentBlock>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tool_call_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tool_calls: Option<Vec<ToolCall>>,
+}
+
+#[allow(dead_code)]
+impl Message {
+    /// Concatenate all text blocks into a single string.
+    pub fn text(&self) -> String {
+        let mut out = String::new();
+        for block in &self.content {
+            if let ContentBlock::Text { text } = block {
+                if !out.is_empty() && !text.is_empty() {
+                    out.push('\n');
+                }
+                out.push_str(text);
+            }
+        }
+        out
+    }
+
+    /// First text block only — for display (excludes file attachments).
+    pub fn display_text(&self) -> &str {
+        self.content
+            .iter()
+            .find_map(|b| match b {
+                ContentBlock::Text { text } => Some(text.as_str()),
+                _ => None,
+            })
+            .unwrap_or("")
+    }
+
+    /// Whether there is any text content.
+    pub fn has_text(&self) -> bool {
+        self.content
+            .iter()
+            .any(|b| matches!(b, ContentBlock::Text { text } if !text.is_empty()))
+    }
+
+    /// Whether message contains image blocks.
+    pub fn has_images(&self) -> bool {
+        self.content
+            .iter()
+            .any(|b| matches!(b, ContentBlock::Image { .. }))
+    }
+
+    /// Create a text-only message.
+    pub fn text_msg(role: Role, text: impl Into<String>) -> Self {
+        Self {
+            role,
+            content: vec![ContentBlock::Text { text: text.into() }],
+            tool_call_id: None,
+            tool_calls: None,
+        }
+    }
+
+    /// Create a user message from text.
+    pub fn user(text: impl Into<String>) -> Self {
+        Self::text_msg(Role::User, text)
+    }
+
+    /// Create a system message.
+    pub fn system(text: impl Into<String>) -> Self {
+        Self::text_msg(Role::System, text)
+    }
+
+    /// Create an assistant message from text.
+    pub fn assistant(text: impl Into<String>) -> Self {
+        Self::text_msg(Role::Assistant, text)
+    }
+
+    /// Create a tool result message.
+    pub fn tool(id: impl Into<String>, text: impl Into<String>) -> Self {
+        Self {
+            role: Role::Tool,
+            content: vec![ContentBlock::Text { text: text.into() }],
+            tool_call_id: Some(id.into()),
+            tool_calls: None,
+        }
+    }
+}
+
+/// Deserialize content from either a plain string (legacy) or Vec<ContentBlock>.
+fn deserialize_content<'de, D>(deserializer: D) -> Result<Vec<ContentBlock>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    use serde::de;
+
+    struct ContentVisitor;
+
+    impl<'de> de::Visitor<'de> for ContentVisitor {
+        type Value = Vec<ContentBlock>;
+
+        fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+            f.write_str("a string or array of content blocks")
+        }
+
+        fn visit_str<E: de::Error>(self, v: &str) -> Result<Self::Value, E> {
+            Ok(vec![ContentBlock::Text { text: v.to_owned() }])
+        }
+
+        fn visit_string<E: de::Error>(self, v: String) -> Result<Self::Value, E> {
+            Ok(vec![ContentBlock::Text { text: v }])
+        }
+
+        fn visit_seq<A: de::SeqAccess<'de>>(self, seq: A) -> Result<Self::Value, A::Error> {
+            Vec::deserialize(de::value::SeqAccessDeserializer::new(seq))
+        }
+    }
+
+    deserializer.deserialize_any(ContentVisitor)
 }
 
 /// Message role.
@@ -105,15 +223,73 @@ mod tests {
 
     #[test]
     fn message_serializes() {
-        let msg = Message {
-            role: Role::User,
-            content: "hello".into(),
-            tool_call_id: None,
-            tool_calls: None,
-        };
+        let msg = Message::user("hello");
         let json = serde_json::to_string(&msg).unwrap();
         assert!(json.contains("\"role\":\"user\""));
         assert!(!json.contains("tool_call_id"));
+    }
+
+    #[test]
+    fn message_text_helper() {
+        let msg = Message::user("hello");
+        assert_eq!(msg.text(), "hello");
+    }
+
+    #[test]
+    fn message_multiblock_text() {
+        let msg = Message {
+            role: Role::User,
+            content: vec![
+                ContentBlock::Text {
+                    text: "hello".into(),
+                },
+                ContentBlock::Image {
+                    media_type: "image/png".into(),
+                    id: "img_1".into(),
+                },
+                ContentBlock::Text {
+                    text: "world".into(),
+                },
+            ],
+            tool_call_id: None,
+            tool_calls: None,
+        };
+        assert_eq!(msg.text(), "hello\nworld");
+        assert!(msg.has_images());
+        assert!(msg.has_text());
+    }
+
+    #[test]
+    fn deserialize_legacy_string_content() {
+        let json = r#"{"role":"user","content":"hello"}"#;
+        let msg: Message = serde_json::from_str(json).unwrap();
+        assert_eq!(msg.text(), "hello");
+        assert_eq!(msg.content.len(), 1);
+    }
+
+    #[test]
+    fn deserialize_array_content() {
+        let json = r#"{"role":"user","content":[{"type":"text","text":"hi"},{"type":"image","media_type":"image/png","id":"img_1"}]}"#;
+        let msg: Message = serde_json::from_str(json).unwrap();
+        assert_eq!(msg.text(), "hi");
+        assert!(msg.has_images());
+    }
+
+    #[test]
+    fn message_constructors() {
+        let u = Message::user("test");
+        assert_eq!(u.role, Role::User);
+        assert_eq!(u.text(), "test");
+
+        let s = Message::system("sys");
+        assert_eq!(s.role, Role::System);
+
+        let a = Message::assistant("reply");
+        assert_eq!(a.role, Role::Assistant);
+
+        let t = Message::tool("tc_1", "result");
+        assert_eq!(t.role, Role::Tool);
+        assert_eq!(t.tool_call_id.as_deref(), Some("tc_1"));
     }
 
     #[test]

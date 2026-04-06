@@ -1,6 +1,6 @@
 /// Claude provider — Anthropic Messages API with SSE streaming.
 use crate::core::provider::Provider;
-use crate::core::types::{Message, Role, ToolCall, ToolCallFunction, ToolSchema, ThinkingLevel, Usage};
+use crate::core::types::{ContentBlock, Message, Role, ToolCall, ToolCallFunction, ToolSchema, ThinkingLevel, Usage};
 use crate::event::Event;
 use crate::provider::sse::{post_sse, SseEvent};
 use anyhow::Result;
@@ -49,12 +49,13 @@ impl Provider for ClaudeProvider {
         messages: &'a [Message],
         tools: &'a [ToolSchema],
         server_tools: &'a [serde_json::Value],
+        resolve_image: &'a crate::core::provider::ImageResolver,
         tx: mpsc::Sender<Event>,
         cancel: CancellationToken,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(Message, Usage)>> + Send + 'a>> {
         Box::pin(async move {
         let system_text = extract_system(messages);
-        let api_messages = to_api_messages(messages);
+        let api_messages = to_api_messages(messages, resolve_image);
         let mut api_tools = to_api_tools(tools);
 
         // Append server-side tools (e.g. web search)
@@ -93,9 +94,9 @@ impl Provider for ClaudeProvider {
         }
 
         if self.is_oauth {
-            let first_user = messages.iter().find(|m| m.role == Role::User)
-                .map(|m| m.content.as_str()).unwrap_or("");
-            body["system"] = build_oauth_system(&system_text, first_user);
+            let first_user_text = messages.iter().find(|m| m.role == Role::User)
+                .map(|m| m.text()).unwrap_or_default();
+            body["system"] = build_oauth_system(&system_text, &first_user_text);
             if api_tools.is_empty() {
                 api_tools.push(serde_json::json!({
                     "name": "mcp_noop", "description": "No-op",
@@ -278,12 +279,9 @@ impl Provider for ClaudeProvider {
             },
         ).await?;
 
-        Ok((Message {
-            role: Role::Assistant,
-            content: text,
-            tool_call_id: None,
-            tool_calls: if tool_calls.is_empty() { None } else { Some(tool_calls) },
-        }, usage))
+        let mut msg = Message::assistant(text);
+        if !tool_calls.is_empty() { msg.tool_calls = Some(tool_calls); }
+        Ok((msg, usage))
     })
     }
 }
@@ -332,21 +330,57 @@ fn build_betas(model: &str) -> String {
 fn extract_system(messages: &[Message]) -> String {
     messages.iter()
         .filter(|m| m.role == Role::System)
-        .map(|m| m.content.as_str())
+        .map(|m| m.text())
         .collect::<Vec<_>>()
         .join("\n\n")
 }
 
-fn to_api_messages(messages: &[Message]) -> Vec<serde_json::Value> {
+/// Convert content blocks to Anthropic API format.
+fn content_blocks_to_api(
+    blocks: &[ContentBlock],
+    resolve: &crate::core::provider::ImageResolver,
+) -> Vec<serde_json::Value> {
+    blocks.iter().filter_map(|b| match b {
+        ContentBlock::Text { text } if !text.is_empty() => {
+            Some(serde_json::json!({"type": "text", "text": text}))
+        }
+        ContentBlock::Image { media_type, id } => {
+            let data = resolve(id);
+            if data.is_empty() { return None; }
+            Some(serde_json::json!({
+                "type": "image",
+                "source": {
+                    "type": "base64",
+                    "media_type": media_type,
+                    "data": data,
+                }
+            }))
+        }
+        _ => None,
+    }).collect()
+}
+
+fn to_api_messages(
+    messages: &[Message],
+    resolve: &crate::core::provider::ImageResolver,
+) -> Vec<serde_json::Value> {
     let mut result = Vec::new();
     for msg in messages {
         if msg.role == Role::System { continue; }
         match msg.role {
-            Role::User => result.push(serde_json::json!({"role": "user", "content": msg.content})),
+            Role::User => {
+                let api_content = content_blocks_to_api(&msg.content, resolve);
+                if api_content.len() == 1 && !msg.has_images() {
+                    result.push(serde_json::json!({"role": "user", "content": msg.text()}));
+                } else {
+                    result.push(serde_json::json!({"role": "user", "content": api_content}));
+                }
+            }
             Role::Assistant => {
                 let mut content = Vec::new();
-                if !msg.content.is_empty() {
-                    content.push(serde_json::json!({"type": "text", "text": msg.content}));
+                let text = msg.text();
+                if !text.is_empty() {
+                    content.push(serde_json::json!({"type": "text", "text": text}));
                 }
                 if let Some(tcs) = &msg.tool_calls {
                     for tc in tcs {
@@ -363,7 +397,7 @@ fn to_api_messages(messages: &[Message]) -> Vec<serde_json::Value> {
                 let tool_result = serde_json::json!({
                     "type": "tool_result",
                     "tool_use_id": msg.tool_call_id.as_deref().unwrap_or(""),
-                    "content": msg.content
+                    "content": msg.text()
                 });
                 if let Some(last) = result.last_mut()
                     && last["role"] == "user" && last["content"].is_array()

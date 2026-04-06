@@ -1,6 +1,6 @@
 /// OpenAI-compatible chat completions provider with SSE streaming.
 use crate::core::provider::Provider;
-use crate::core::types::{Message, Role, ToolCall, ToolCallFunction, ToolSchema, ThinkingLevel, Usage};
+use crate::core::types::{ContentBlock, Message, Role, ToolCall, ToolCallFunction, ToolSchema, ThinkingLevel, Usage};
 use crate::event::Event;
 use crate::provider::sse::{post_sse, SseEvent};
 use anyhow::Result;
@@ -50,11 +50,12 @@ impl Provider for OpenAIProvider {
         messages: &'a [Message],
         tools: &'a [ToolSchema],
         server_tools: &'a [serde_json::Value],
+        resolve_image: &'a crate::core::provider::ImageResolver,
         tx: mpsc::Sender<Event>,
         cancel: CancellationToken,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(Message, Usage)>> + Send + 'a>> {
         Box::pin(async move {
-        let api_messages = to_api_messages(messages);
+        let api_messages = to_api_messages(messages, resolve_image);
         let mut api_tools = to_api_tools(tools);
 
         // Append server-side tools
@@ -143,23 +144,43 @@ impl Provider for OpenAIProvider {
             }
         }).collect();
 
-        Ok((Message {
-            role: Role::Assistant,
-            content: text,
-            tool_call_id: None,
-            tool_calls: if tool_calls.is_empty() { None } else { Some(tool_calls) },
-        }, usage))
+        let mut msg = Message::assistant(text);
+        if !tool_calls.is_empty() { msg.tool_calls = Some(tool_calls); }
+        Ok((msg, usage))
     })
     }
 }
 
-fn to_api_messages(messages: &[Message]) -> Vec<serde_json::Value> {
+fn to_api_messages(
+    messages: &[Message],
+    resolve: &crate::core::provider::ImageResolver,
+) -> Vec<serde_json::Value> {
     messages.iter().map(|msg| {
         match msg.role {
-            Role::System => serde_json::json!({"role": "system", "content": msg.content}),
-            Role::User => serde_json::json!({"role": "user", "content": msg.content}),
+            Role::System => serde_json::json!({"role": "system", "content": msg.text()}),
+            Role::User => {
+                if msg.has_images() {
+                    let content: Vec<serde_json::Value> = msg.content.iter().filter_map(|b| match b {
+                        ContentBlock::Text { text } if !text.is_empty() => {
+                            Some(serde_json::json!({"type": "text", "text": text}))
+                        }
+                        ContentBlock::Image { media_type, id } => {
+                            let data = resolve(id);
+                            if data.is_empty() { return None; }
+                            Some(serde_json::json!({
+                                "type": "image_url",
+                                "image_url": {"url": format!("data:{media_type};base64,{data}")}
+                            }))
+                        }
+                        _ => None,
+                    }).collect();
+                    serde_json::json!({"role": "user", "content": content})
+                } else {
+                    serde_json::json!({"role": "user", "content": msg.text()})
+                }
+            }
             Role::Assistant => {
-                let mut v = serde_json::json!({"role": "assistant", "content": msg.content});
+                let mut v = serde_json::json!({"role": "assistant", "content": msg.text()});
                 if let Some(tcs) = &msg.tool_calls {
                     let api_tcs: Vec<_> = tcs.iter().map(|tc| serde_json::json!({
                         "id": tc.id, "type": "function",
@@ -171,7 +192,7 @@ fn to_api_messages(messages: &[Message]) -> Vec<serde_json::Value> {
             }
             Role::Tool => serde_json::json!({
                 "role": "tool",
-                "content": msg.content,
+                "content": msg.text(),
                 "tool_call_id": msg.tool_call_id.as_deref().unwrap_or("")
             }),
         }

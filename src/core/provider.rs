@@ -10,6 +10,9 @@ use tokio_util::sync::CancellationToken;
 /// Response from a provider stream: assistant message + token usage.
 pub type StreamResponse = (Message, Usage);
 
+/// Resolves image id → base64 data. Passed to providers so they don't touch filesystem.
+pub type ImageResolver = dyn Fn(&str) -> String + Send + Sync;
+
 /// An LLM provider that streams responses as Events. Object-safe.
 pub trait Provider: Send + Sync {
     /// Provider display name (e.g. "claude", "openai").
@@ -24,20 +27,18 @@ pub trait Provider: Send + Sync {
     fn set_thinking(&mut self, level: ThinkingLevel);
 
     /// Build native schemas for server capabilities this provider supports.
-    /// Each provider maps capability names to its own API format.
-    /// Unknown capabilities are silently ignored.
     fn server_tool_schemas(&self, capabilities: &[String]) -> Vec<serde_json::Value> {
         let _ = capabilities;
         vec![]
     }
 
-    /// Stream a chat completion. Sends Token/Thinking/ToolStart/ToolEnd/Usage
-    /// events into `tx`. Returns the final assistant message + usage.
+    /// Stream a chat completion. `resolve_image` maps image id → base64 string.
     fn stream<'a>(
         &'a self,
         messages: &'a [Message],
         tools: &'a [ToolSchema],
         server_tools: &'a [serde_json::Value],
+        resolve_image: &'a ImageResolver,
         tx: mpsc::Sender<Event>,
         cancel: CancellationToken,
     ) -> Pin<Box<dyn Future<Output = Result<StreamResponse>> + Send + 'a>>;

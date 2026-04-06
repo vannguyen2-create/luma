@@ -64,7 +64,8 @@ impl Session {
             .iter()
             .find(|m| m.role == crate::core::types::Role::User)
         {
-            let first_line = msg.content.lines().next().unwrap_or("");
+            let text = msg.text();
+            let first_line = text.lines().next().unwrap_or("");
             self.title = first_line.chars().take(60).collect();
         }
     }
@@ -148,6 +149,41 @@ fn sessions_dir() -> PathBuf {
     PathBuf::from(home).join(".config/luma/sessions")
 }
 
+/// Directory for storing session assets (images, etc).
+fn session_assets_dir(session_id: &str) -> PathBuf {
+    sessions_dir().join(session_id)
+}
+
+/// Save image bytes to `sessions/{session_id}/{filename}`. Returns filename.
+pub fn save_image(session_id: &str, data: &[u8], ext: &str) -> String {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let ts = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis();
+    let filename = format!("img_{ts:x}.{ext}");
+    let dir = session_assets_dir(session_id);
+    let _ = fs::create_dir_all(&dir);
+    let _ = fs::write(dir.join(&filename), data);
+    filename
+}
+
+/// Read image as base64 from deterministic path `sessions/{session_id}/{image_id}`.
+pub fn read_image_base64(session_id: &str, image_id: &str) -> String {
+    use base64::Engine;
+    let path = session_assets_dir(session_id).join(image_id);
+    match fs::read(&path) {
+        Ok(data) => base64::engine::general_purpose::STANDARD.encode(&data),
+        Err(_) => String::new(),
+    }
+}
+
+/// Build an image resolver closure for a given session.
+pub fn image_resolver(session_id: &str) -> Box<dyn Fn(&str) -> String + Send + Sync> {
+    let sid = session_id.to_owned();
+    Box::new(move |image_id: &str| read_image_base64(&sid, image_id))
+}
+
 fn generate_id() -> String {
     use std::time::{SystemTime, UNIX_EPOCH};
     let ts = SystemTime::now()
@@ -181,12 +217,8 @@ mod tests {
     #[test]
     fn auto_title_from_user_message() {
         let mut s = Session::new();
-        s.messages.push(Message {
-            role: crate::core::types::Role::User,
-            content: "Hello, can you help me with Rust?".into(),
-            tool_call_id: None,
-            tool_calls: None,
-        });
+        s.messages
+            .push(Message::user("Hello, can you help me with Rust?"));
         s.auto_title();
         assert_eq!(s.title, "Hello, can you help me with Rust?");
     }
@@ -195,12 +227,7 @@ mod tests {
     fn auto_title_truncates_long() {
         let mut s = Session::new();
         let long = "x".repeat(100);
-        s.messages.push(Message {
-            role: crate::core::types::Role::User,
-            content: long,
-            tool_call_id: None,
-            tool_calls: None,
-        });
+        s.messages.push(Message::user(long));
         s.auto_title();
         assert_eq!(s.title.len(), 60);
     }
@@ -209,5 +236,29 @@ mod tests {
     fn list_sessions_empty() {
         // Just verify it doesn't panic
         let _ = list_sessions();
+    }
+
+    #[test]
+    fn deserialize_content_block_session() {
+        // Session with Vec<ContentBlock> content (new format)
+        let json = r#"{
+            "id": "ses_test",
+            "title": "test",
+            "created_at": "123",
+            "updated_at": "456",
+            "messages": [
+                {"role": "system", "content": [{"type": "text", "text": "You are helpful."}]},
+                {"role": "user", "content": [{"type": "text", "text": "\n<file path=\"test.rs\">\n```rs\nfn main() {}\n```\n</file>\n what is this"}]},
+                {"role": "assistant", "content": [{"type": "text", "text": "This is a Rust main function."}]}
+            ],
+            "usage": {"input_tokens": 0, "output_tokens": 0, "cache_read": 0, "cache_write": 0},
+            "turn_durations": [1.5]
+        }"#;
+        let session: Session = serde_json::from_str(json).unwrap();
+        assert_eq!(session.messages.len(), 3);
+        assert_eq!(session.messages[1].role, crate::core::types::Role::User);
+        let text = session.messages[1].text();
+        assert!(text.contains("fn main()"));
+        assert!(text.contains("what is this"));
     }
 }

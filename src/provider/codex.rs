@@ -46,6 +46,7 @@ impl Provider for CodexProvider {
         messages: &'a [Message],
         tools: &'a [ToolSchema],
         server_tools: &'a [serde_json::Value],
+        _resolve_image: &'a crate::core::provider::ImageResolver,
         tx: mpsc::Sender<Event>,
         cancel: CancellationToken,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(Message, Usage)>> + Send + 'a>> {
@@ -200,12 +201,9 @@ impl Provider for CodexProvider {
             }
         }
 
-        Ok((Message {
-            role: Role::Assistant,
-            content: text,
-            tool_call_id: None,
-            tool_calls: if tool_calls.is_empty() { None } else { Some(tool_calls) },
-        }, usage))
+        let mut msg = Message::assistant(text);
+        if !tool_calls.is_empty() { msg.tool_calls = Some(tool_calls); }
+        Ok((msg, usage))
     })
     }
 }
@@ -213,7 +211,7 @@ impl Provider for CodexProvider {
 fn extract_system(messages: &[Message]) -> String {
     messages.iter()
         .filter(|m| m.role == Role::System)
-        .map(|m| m.content.as_str())
+        .map(|m| m.text())
         .collect::<Vec<_>>()
         .join("\n\n")
 }
@@ -224,7 +222,7 @@ fn build_input(messages: &[Message]) -> Vec<serde_json::Value> {
         if msg.role == Role::System { continue; }
         match msg.role {
             Role::User => {
-                input.push(serde_json::json!({"role": "user", "content": msg.content}));
+                input.push(serde_json::json!({"role": "user", "content": msg.text()}));
             }
             Role::Assistant => {
                 if let Some(tcs) = &msg.tool_calls {
@@ -237,15 +235,15 @@ fn build_input(messages: &[Message]) -> Vec<serde_json::Value> {
                         }));
                     }
                 }
-                if !msg.content.is_empty() {
-                    input.push(serde_json::json!({"role": "assistant", "content": msg.content}));
+                if msg.has_text() {
+                    input.push(serde_json::json!({"role": "assistant", "content": msg.text()}));
                 }
             }
             Role::Tool => {
                 input.push(serde_json::json!({
                     "type": "function_call_output",
                     "call_id": msg.tool_call_id.as_deref().unwrap_or(""),
-                    "output": msg.content,
+                    "output": msg.text(),
                 }));
             }
             _ => {}
