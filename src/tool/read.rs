@@ -161,6 +161,11 @@ impl Tool for ReadTool {
     }
 }
 
+/// Public wrapper for edit tool "did you mean?" suggestions.
+pub fn suggest_similar_file(path: &std::path::Path) -> Option<String> {
+    suggest_similar(path)
+}
+
 /// Suggest a similar filename in the same directory.
 fn suggest_similar(path: &std::path::Path) -> Option<String> {
     let parent = path.parent()?;

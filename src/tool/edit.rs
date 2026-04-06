@@ -8,7 +8,37 @@ use std::future::Future;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
+const MAX_EDIT_FILE_SIZE: u64 = 10 * 1024 * 1024; // 10 MB
 
+
+
+/// Normalize curly quotes to straight quotes for fuzzy matching.
+fn normalize_quotes(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
+        match c {
+            '\u{2018}' | '\u{2019}' => out.push('\''),
+            '\u{201C}' | '\u{201D}' => out.push('"'),
+            _ => out.push(c),
+        }
+    }
+    out
+}
+
+/// Find actual string in file, accounting for curly-quote normalization.
+/// Returns the file's version of the string if found via normalization.
+fn find_actual_string(content: &str, search: &str) -> Option<String> {
+    // Exact match — no normalization needed
+    if content.contains(search) {
+        return None; // caller uses original
+    }
+    // Try normalized quotes
+    let norm_search = normalize_quotes(search);
+    let norm_content = normalize_quotes(content);
+    let idx = norm_content.find(&norm_search)?;
+    // Extract the actual substring from the original content at the same position
+    Some(content[idx..idx + search.len()].to_owned())
+}
 
 /// Edits files by exact string replacement.
 pub struct EditTool;
@@ -71,10 +101,30 @@ impl Tool for EditTool {
                     }
                     return Ok(format!("Created {}", path.display()));
                 }
-                Err(_) => bail!("file not found — {}", path.display()),
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                    let suggestion = crate::tool::read::suggest_similar_file(&path);
+                    let msg = format!("File not found: {}", path.display());
+                    if let Some(s) = suggestion {
+                        bail!("{msg}. Did you mean {s}?");
+                    }
+                    bail!("{msg}");
+                }
+                Err(e) => bail!(e),
             };
 
-            let count = content.matches(old).count();
+            // File size guard
+            if let Ok(meta) = std::fs::metadata(&path)
+                && meta.len() > MAX_EDIT_FILE_SIZE
+            {
+                bail!("File too large ({:.1} MB). Use Bash with sed for large files.",
+                    meta.len() as f64 / 1_048_576.0);
+            }
+
+            // Try exact match first, then curly-quote normalized match
+            let actual_old = find_actual_string(&content, old);
+            let search = actual_old.as_deref().unwrap_or(old);
+
+            let count = content.matches(search).count();
             if count == 0 {
                 bail!("old_string not found in file");
             }
@@ -83,15 +133,20 @@ impl Tool for EditTool {
             }
 
             let updated = if replace_all {
-                content.replace(old, new)
+                content.replace(search, new)
             } else {
-                content.replacen(old, new, 1)
+                content.replacen(search, new, 1)
             };
+
+            // Skip write if nothing changed
+            if updated == content {
+                return Ok(format!("{} is unchanged", path.display()));
+            }
 
             std::fs::write(&path, &updated)?;
 
             // Send context-based diff to UI (no LCS needed — we know exact position)
-            let diff = crate::tool::diff::make_edit_diff(&content, old, new, replace_all);
+            let diff = crate::tool::diff::make_edit_diff(&content, search, new, replace_all);
             for line in &diff {
                 let _ = output_tx.send(format!("{line}\n")).await;
             }
