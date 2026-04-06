@@ -13,15 +13,12 @@ pub enum AuthProvider {
 }
 
 /// Resolved credential from any auth source. Providers pick what they need.
+/// Refresh token and expiry live in ManagedEntry (internal cache), not here.
 #[derive(Debug, Clone)]
 pub struct Credential {
     pub token: String,
     pub is_oauth: bool,
-    #[allow(dead_code)] // TODO: token refresh flow
-    pub refresh_token: Option<String>,
     pub account_id: Option<String>,
-    #[allow(dead_code)]
-    pub expires_at: Option<String>,
 }
 
 const CLAUDE_OAUTH_ENDPOINT: &str = "https://platform.claude.com/v1/oauth/token";
@@ -82,9 +79,7 @@ impl ManagedEntry {
         Credential {
             token: self.access_token.clone(),
             is_oauth: self.is_oauth,
-            refresh_token: self.refresh_token.clone(),
             account_id: self.account_id.clone(),
-            expires_at: self.expires_at.clone(),
         }
     }
 }
