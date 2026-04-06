@@ -3,6 +3,7 @@ use crate::core::tool::Tool;
 use crate::core::types::ToolSchema;
 use anyhow::{bail, Result};
 use std::fs;
+use std::io::{BufRead, BufReader};
 use std::path::PathBuf;
 use std::pin::Pin;
 use std::future::Future;
@@ -10,6 +11,7 @@ use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
 const DEFAULT_LIMIT: usize = 2000;
+const MAX_LINE_LEN: usize = 2000;
 
 /// Reads files with line numbers or lists directory contents.
 pub struct ReadTool;
@@ -67,21 +69,27 @@ impl Tool for ReadTool {
                 return Ok(entries.join("\n"));
             }
 
-            let content = fs::read_to_string(&path)?;
+            let file = fs::File::open(&path)?;
+            let reader = BufReader::new(file);
             let offset = args.get("offset").and_then(|v| v.as_u64()).unwrap_or(1).max(1) as usize;
             let limit = args.get("limit").and_then(|v| v.as_u64()).unwrap_or(DEFAULT_LIMIT as u64) as usize;
 
             let mut result = String::new();
             let mut count = 0;
 
-            for (i, line) in content.lines().enumerate() {
+            for (i, line) in reader.lines().enumerate() {
+                let line = line?;
                 let line_num = i + 1;
                 if line_num < offset { continue; }
                 if count >= limit {
                     result.push_str(&format!("[{line_num}+ more lines]\n"));
                     break;
                 }
-                result.push_str(&format!("{line_num}: {line}\n"));
+                if line.len() > MAX_LINE_LEN {
+                    result.push_str(&format!("{line_num}: {}...\n", &line[..MAX_LINE_LEN]));
+                } else {
+                    result.push_str(&format!("{line_num}: {line}\n"));
+                }
                 count += 1;
             }
 

@@ -57,7 +57,7 @@ impl Tool for WriteTool {
             // Send diff lines to UI
             let diff = crate::tool::diff::make_diff(&old, content);
             for line in &diff {
-                let _ = output_tx.try_send(format!("{line}\n"));
+                let _ = output_tx.send(format!("{line}\n")).await;
             }
 
             let total_lines = content.lines().count();

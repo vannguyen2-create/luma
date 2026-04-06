@@ -67,18 +67,17 @@ impl Tool for EditTool {
                     std::fs::write(&path, new)?;
                     let diff = crate::tool::diff::make_diff("", new);
                     for line in &diff {
-                        let _ = output_tx.try_send(format!("{line}\n"));
+                        let _ = output_tx.send(format!("{line}\n")).await;
                     }
                     return Ok(format!("Created {}", path.display()));
                 }
                 Err(_) => bail!("file not found — {}", path.display()),
             };
 
-            if !content.contains(old) {
+            let count = content.matches(old).count();
+            if count == 0 {
                 bail!("old_string not found in file");
             }
-
-            let count = content.matches(old).count();
             if count > 1 && !replace_all {
                 bail!("found {count} matches. Set replace_all=true or provide more context.");
             }
@@ -94,7 +93,7 @@ impl Tool for EditTool {
             // Send context-based diff to UI (no LCS needed — we know exact position)
             let diff = crate::tool::diff::make_edit_diff(&content, old, new, replace_all);
             for line in &diff {
-                let _ = output_tx.try_send(format!("{line}\n"));
+                let _ = output_tx.send(format!("{line}\n")).await;
             }
 
             let old_lines = old.lines().count() as isize;

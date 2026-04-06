@@ -94,7 +94,7 @@ impl Tool for BashTool {
             let mut stdout = child.stdout.take().expect("stdout piped");
             let mut stderr = child.stderr.take().expect("stderr piped");
 
-            // Read stdout + stderr with cancel/timeout support
+            // Read stdout + stderr with cancel/deadline support
             let (output, exit_code) = {
                 let mut out = String::new();
                 let mut err = String::new();
@@ -104,6 +104,8 @@ impl Tool for BashTool {
                 let mut timed_out = false;
                 let mut stdout_done = false;
                 let mut stderr_done = false;
+                let deadline = tokio::time::Instant::now()
+                    + std::time::Duration::from_millis(timeout_ms);
 
                 loop {
                     if stdout_done && stderr_done {
@@ -112,7 +114,7 @@ impl Tool for BashTool {
                     tokio::select! {
                         biased;
                         _ = cancel.cancelled() => { aborted = true; break; }
-                        _ = tokio::time::sleep(std::time::Duration::from_millis(timeout_ms)) => { timed_out = true; break; }
+                        _ = tokio::time::sleep_until(deadline) => { timed_out = true; break; }
                         n = stdout.read(&mut stdout_buf), if !stdout_done => {
                             let n = n?;
                             if n == 0 { stdout_done = true; continue; }
