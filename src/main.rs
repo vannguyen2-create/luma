@@ -148,8 +148,7 @@ fn build_env_context() -> String {
     };
 
     format!(
-        "\nYou have tools: read (files/dirs), write (files), bash (shell commands).\n\n\
-         <env>\n  OS: {} {}\n  Shell: {shell}\n  CWD: {}\n  Git: {git_info}\n  CLI: {}\n</env>",
+        "\n<env>\n  OS: {} {}\n  Shell: {shell}\n  CWD: {}\n  Git: {git_info}\n  CLI: {}\n</env>",
         std::env::consts::OS, std::env::consts::ARCH,
         cwd.display(),
         tools.join(", "),
