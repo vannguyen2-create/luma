@@ -99,7 +99,6 @@ pub fn save_thinking(level: ThinkingLevel) {
 }
 
 /// Load last session for current workspace.
-#[allow(dead_code)] // available for /resume command
 pub fn load_last_session() -> Option<String> {
     let cwd = std::env::current_dir().ok()?.to_string_lossy().into_owned();
     fs::read_to_string(prefs_path())

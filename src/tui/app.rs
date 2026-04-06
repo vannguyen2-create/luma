@@ -181,6 +181,10 @@ impl App {
             };
             app.ui.status.set_thinking_level(label);
         }
+        // Auto-resume last session
+        if let Some(session_id) = crate::config::prefs::load_last_session() {
+            app.resume_session(&session_id);
+        }
         app
     }
 
