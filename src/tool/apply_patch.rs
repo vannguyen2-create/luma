@@ -1,7 +1,7 @@
 /// apply_patch tool — Codex-compatible patch format for Deep mode.
 mod parse;
 
-use parse::{seek_sequence, Hunk};
+use parse::{seek_context, seek_sequence, Hunk};
 
 use crate::core::tool::Tool;
 use crate::core::types::ToolSchema;
@@ -95,8 +95,14 @@ async fn apply_hunks(hunks: &[Hunk], tx: &mpsc::Sender<String>) -> Result<String
                 let mut line_idx = 0;
 
                 for chunk in chunks {
+                    // Use @@ context hint to jump to the right scope
+                    let search_from = if let Some(ctx) = &chunk.context {
+                        seek_context(&lines, ctx, line_idx).unwrap_or(line_idx)
+                    } else {
+                        line_idx
+                    };
                     let found = seek_sequence(
-                        &lines, &chunk.old_lines, line_idx, chunk.is_eof,
+                        &lines, &chunk.old_lines, search_from, chunk.is_eof,
                     );
                     if let Some(start) = found {
                         replacements.push((

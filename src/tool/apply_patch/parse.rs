@@ -11,7 +11,8 @@ pub enum Hunk {
 
 #[derive(Debug, Clone)]
 pub struct Chunk {
-    #[allow(dead_code)] // TODO: use for fuzzy context matching
+    /// Context hint from `@@ fn main()` header — used to jump to the
+    /// right scope before seeking the exact line sequence.
     pub context: Option<String>,
     pub old_lines: Vec<String>,
     pub new_lines: Vec<String>,
@@ -138,6 +139,23 @@ fn strip_heredoc<'a>(lines: &'a [&'a str]) -> Vec<&'a str> {
     lines.to_vec()
 }
 
+/// Find the line containing context string (e.g. "fn main()") starting from `start`.
+/// Returns the line index so `seek_sequence` can search from there.
+pub fn seek_context(lines: &[String], context: &str, start: usize) -> Option<usize> {
+    let ctx = context.trim();
+    if ctx.is_empty() { return None; }
+    // Exact substring match
+    for (i, line) in lines.iter().enumerate().skip(start) {
+        if line.contains(ctx) { return Some(i); }
+    }
+    // Normalized match (unicode, whitespace)
+    let norm_ctx = normalise(ctx);
+    for (i, line) in lines.iter().enumerate().skip(start) {
+        if normalise(line).contains(&norm_ctx) { return Some(i); }
+    }
+    None
+}
+
 /// Find pattern in lines starting from start, with fuzzy fallbacks.
 pub fn seek_sequence(lines: &[String], pattern: &[String], start: usize, eof: bool) -> Option<usize> {
     if pattern.is_empty() { return Some(start); }
@@ -260,6 +278,17 @@ mod tests {
         let lines: Vec<String> = vec!["a", "b", "c"].into_iter().map(String::from).collect();
         let pattern: Vec<String> = vec!["b", "c"].into_iter().map(String::from).collect();
         assert_eq!(seek_sequence(&lines, &pattern, 0, true), Some(1));
+    }
+
+    #[test]
+    fn seek_context_jumps_to_function() {
+        let lines: Vec<String> = vec![
+            "fn first() {", "    1", "}", "",
+            "fn second() {", "    2", "}",
+        ].into_iter().map(String::from).collect();
+        assert_eq!(seek_context(&lines, "fn second()", 0), Some(4));
+        assert_eq!(seek_context(&lines, "fn first()", 0), Some(0));
+        assert_eq!(seek_context(&lines, "fn nonexistent()", 0), None);
     }
 
     #[test]
