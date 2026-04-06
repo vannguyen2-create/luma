@@ -9,6 +9,8 @@ use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
 const MAX_OUTPUT: usize = 32_000;
+const HEAD_BYTES: usize = 8_000;  // keep first 8K
+const TAIL_BYTES: usize = 20_000; // keep last 20K — errors/results are at the end
 const DEFAULT_TIMEOUT_MS: u64 = 30_000;
 
 /// Dangerous command patterns — checked as substrings.
@@ -94,11 +96,14 @@ impl Tool for BashTool {
             let mut stdout = child.stdout.take().expect("stdout piped");
             let mut stderr = child.stderr.take().expect("stderr piped");
 
-            // Read stdout + stderr with cancel/deadline support
+            // Read stdout + stderr interleaved with cancel/deadline support.
+            // Keeps head + tail of output so errors at the end are preserved.
             let (output, exit_code) = {
                 let mut out = String::new();
-                let mut err = String::new();
-                let mut stdout_buf = [0u8; 4096];
+                let mut total_bytes = 0usize;
+                let mut tail = String::new();
+                let mut truncated = false;
+                let mut buf = [0u8; 4096];
                 let mut stderr_buf = [0u8; 4096];
                 let mut aborted = false;
                 let mut timed_out = false;
@@ -115,26 +120,32 @@ impl Tool for BashTool {
                         biased;
                         _ = cancel.cancelled() => { aborted = true; break; }
                         _ = tokio::time::sleep_until(deadline) => { timed_out = true; break; }
-                        n = stdout.read(&mut stdout_buf), if !stdout_done => {
+                        n = stdout.read(&mut buf), if !stdout_done => {
                             let n = n?;
                             if n == 0 { stdout_done = true; continue; }
-                            let chunk = String::from_utf8_lossy(&stdout_buf[..n]).to_string();
-                            out.push_str(&chunk);
-                            let _ = output_tx.send(chunk).await;
-                            if out.len() > MAX_OUTPUT {
-                                out.truncate(MAX_OUTPUT);
-                                out.push_str("\n[truncated]");
-                                break;
-                            }
+                            let chunk = String::from_utf8_lossy(&buf[..n]).to_string();
+                            total_bytes += n;
+                            let _ = output_tx.send(chunk.clone()).await;
+                            accumulate(&mut out, &mut tail, &mut truncated, &chunk);
                         }
                         n = stderr.read(&mut stderr_buf), if !stderr_done => {
                             let n = n?;
                             if n == 0 { stderr_done = true; continue; }
                             let chunk = String::from_utf8_lossy(&stderr_buf[..n]).to_string();
-                            err.push_str(&chunk);
-                            let _ = output_tx.send(chunk).await;
+                            total_bytes += n;
+                            let _ = output_tx.send(chunk.clone()).await;
+                            accumulate(&mut out, &mut tail, &mut truncated, &chunk);
                         }
                     }
+                }
+
+                // Build final output: head + [truncated] + tail
+                if truncated {
+                    out.truncate(HEAD_BYTES);
+                    out.push_str(&format!(
+                        "\n\n[... {total_bytes} bytes total, middle truncated ...]\n\n"
+                    ));
+                    out.push_str(&tail);
                 }
 
                 if aborted || timed_out {
@@ -144,9 +155,6 @@ impl Tool for BashTool {
                     (out, if aborted { 130 } else { 124 })
                 } else {
                     let status = child.wait().await?;
-                    if !err.is_empty() {
-                        out.push_str(&err);
-                    }
                     (out, status.code().unwrap_or(1))
                 }
             };
@@ -158,6 +166,25 @@ impl Tool for BashTool {
 
             if result_str.trim().is_empty() { Ok("(no output)".into()) } else { Ok(result_str) }
         })
+    }
+}
+
+/// Accumulate output: head in `out`, tail as rolling window.
+/// Once total exceeds MAX_OUTPUT, stop appending to `out` and keep rolling `tail`.
+fn accumulate(out: &mut String, tail: &mut String, truncated: &mut bool, chunk: &str) {
+    if !*truncated {
+        out.push_str(chunk);
+        if out.len() > MAX_OUTPUT {
+            *truncated = true;
+            *tail = out.split_off(out.len().saturating_sub(TAIL_BYTES));
+        }
+    } else {
+        tail.push_str(chunk);
+        if tail.len() > TAIL_BYTES * 2 {
+            // Keep only the last TAIL_BYTES
+            let start = tail.len() - TAIL_BYTES;
+            *tail = tail[start..].to_owned();
+        }
     }
 }
 
