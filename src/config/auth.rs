@@ -55,6 +55,7 @@ pub fn clear_cached(provider: AuthProvider) {
 }
 
 /// Resolve auth for a provider. Checks managed cache, then local sources.
+/// Automatically refreshes expired tokens when refresh_token is available.
 pub async fn resolve(provider: AuthProvider) -> Result<Credential> {
     let managed = load_managed(provider);
     if let Some(entry) = &managed {
@@ -69,6 +70,17 @@ pub async fn resolve(provider: AuthProvider) -> Result<Credential> {
     }
 
     let local = load_local(provider)?;
+
+    // Local token may already be expired — try refresh before returning
+    if is_expired(&local.expires_at) && local.refresh_token.is_some() {
+        if let Some(refreshed) = try_refresh(&local, provider).await {
+            let cred = refreshed.to_credential();
+            save_managed(&refreshed, provider);
+            return Ok(cred);
+        }
+        anyhow::bail!("OAuth token expired and refresh failed. Please re-login with Claude Code.");
+    }
+
     let cred = local.to_credential();
     save_managed(&local, provider);
     Ok(cred)
@@ -253,8 +265,10 @@ async fn try_refresh(entry: &ManagedEntry, provider: AuthProvider) -> Option<Man
 fn is_expired(expires_at: &Option<String>) -> bool {
     let Some(exp) = expires_at else { return false; };
     let Ok(ts) = exp.parse::<u64>() else { return false; };
+    // Normalize: if timestamp > year 2100 in seconds, it's milliseconds
+    let ts_secs = if ts > 4_102_444_800 { ts / 1000 } else { ts };
     let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs();
-    now >= ts.saturating_sub(300)
+    now >= ts_secs.saturating_sub(300)
 }
 
 fn provider_name(p: AuthProvider) -> &'static str {
