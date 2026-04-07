@@ -28,7 +28,8 @@ TARGET="${arch}-${os}"
 if [ -n "$LUMA_VERSION" ]; then
   TAG="$LUMA_VERSION"
 else
-  TAG=$(curl -fsSL "https://api.github.com/repos/$REPO/releases/latest" \
+  # /releases/latest skips prereleases — use /releases to find newest
+  TAG=$(curl -fsSL "https://api.github.com/repos/$REPO/releases?per_page=1" \
     | grep '"tag_name"' | head -1 | cut -d'"' -f4)
 fi
 
