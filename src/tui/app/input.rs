@@ -5,8 +5,7 @@ use tokio::sync::mpsc;
 
 /// Read terminal events in a blocking loop, sending parsed Events.
 pub fn read_stdin_loop(tx: mpsc::Sender<Event>) {
-    loop {
-        let Ok(raw) = ct::read() else { break };
+    while let Ok(raw) = ct::read() {
 
         // Only forward key-press events (ignore Release/Repeat).
         if let ct::Event::Key(ref k) = raw
