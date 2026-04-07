@@ -25,9 +25,15 @@ Bất biến. Không ngoại lệ. Mỗi PR phải pass tất cả.
 13. **Clippy clean.** `cargo clippy -- -D warnings`. Không `#[allow(clippy::...)]` trừ false positive có comment giải thích.
 14. **Format:** `rustfmt` default. Không customize `rustfmt.toml`.
 
-## IV. Process
+## IV. Cross-platform
 
-15. **Implement theo thứ tự:** types → trait → simplest impl → test → next module. Không thiết kế trait 5 methods rồi implement 1.
-16. **Generic khi ≥ 2 concrete types dùng.** Không generic "cho tương lai".
-17. **Owned ở API boundary, borrowed ở hot path.** `String` cho public API, `&str` cho internal render.
-18. **Đo trước khi optimize.** Có benchmark evidence mới dùng `SmallVec`, pre-alloc, etc.
+15. **Compile-time, không runtime.** Platform selection dùng `#[cfg(unix)]` / `#[cfg(windows)]` ở module level. Không `cfg!(windows)` runtime branch.
+16. **Platform module pattern.** Code platform-specific tách file riêng (`shell/unix.rs`, `shell/windows.rs`), share API qua parent module.
+17. **Tests theo platform.** Test dùng lệnh platform-specific → `#[cfg]` trên function. Cùng tên fn, compiler chọn đúng variant. Không duplicate logic test.
+
+## V. Process
+
+18. **Implement theo thứ tự:** types → trait → simplest impl → test → next module. Không thiết kế trait 5 methods rồi implement 1.
+19. **Generic khi ≥ 2 concrete types dùng.** Không generic "cho tương lai".
+20. **Owned ở API boundary, borrowed ở hot path.** `String` cho public API, `&str` cho internal render.
+21. **Đo trước khi optimize.** Có benchmark evidence mới dùng `SmallVec`, pre-alloc, etc.
