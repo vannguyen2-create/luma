@@ -6,6 +6,8 @@
 
 ## Install
 
+macOS and Linux (aarch64, x86_64):
+
 ```bash
 curl -fsSL https://raw.githubusercontent.com/nghyane/luma/master/install.sh | sh
 ```
