@@ -22,9 +22,9 @@ impl super::PromptState {
         if text.is_empty() {
             return PromptAction::PasteImage;
         }
-        let trimmed = text.trim();
-        if !trimmed.contains('\n') && is_image_path(trimmed) {
-            return PromptAction::PasteImagePath(trimmed.to_owned());
+        let trimmed = strip_quotes(text.trim());
+        if !trimmed.contains('\n') && is_image_path(&trimmed) {
+            return PromptAction::PasteImagePath(trimmed.into_owned());
         }
         self.insert_paste(text);
         PromptAction::Redraw
@@ -238,6 +238,17 @@ impl super::PromptState {
         self.buffer = self.history.get(idx).cloned().unwrap_or_default();
         self.cursor = self.char_count();
         PromptAction::Redraw
+    }
+}
+
+/// Strip surrounding single or double quotes from a string.
+fn strip_quotes(text: &str) -> std::borrow::Cow<'_, str> {
+    if (text.starts_with('\'') && text.ends_with('\''))
+        || (text.starts_with('"') && text.ends_with('"'))
+    {
+        std::borrow::Cow::Borrowed(&text[1..text.len() - 1])
+    } else {
+        std::borrow::Cow::Borrowed(text)
     }
 }
 

@@ -241,7 +241,7 @@ impl super::App {
 
     /// Handle bracketed paste from terminal.
     pub(super) fn on_paste(&mut self, text: String) -> Action {
-        crate::dbg_log!("paste: {}B", text.len());
+        crate::dbg_log!("paste: {}B {:?}", text.len(), text);
         match self.ui.prompt.handle_paste(text) {
             PromptAction::None => Action::Continue,
             PromptAction::Redraw => Action::Render,
@@ -253,9 +253,9 @@ impl super::App {
                 self.paste_image_file(&path);
                 Action::Render
             }
-            PromptAction::Submit(_)
-            | PromptAction::Interrupt
-            | PromptAction::ToggleThinking => Action::Render,
+            PromptAction::Submit(_) | PromptAction::Interrupt | PromptAction::ToggleThinking => {
+                Action::Render
+            }
         }
     }
 }
