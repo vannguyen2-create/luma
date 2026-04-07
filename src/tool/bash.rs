@@ -186,6 +186,7 @@ fn accumulate(out: &mut String, tail: &mut String, truncated: &mut bool, chunk: 
 }
 
 #[cfg(test)]
+#[cfg(unix)]
 mod tests {
     use super::*;
 
