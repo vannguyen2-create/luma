@@ -24,7 +24,7 @@ Update: `luma update`
 
 **@file mention** — type `@` in prompt to autocomplete file paths. File content injected as context when sent. Multiple files supported.
 
-**Image paste** — `Alt+V` to paste clipboard image. Sent as multimodal content to the model.
+**Image paste** — paste (Cmd+V / Ctrl+V) when clipboard has an image. Sent as multimodal content to the model.
 
 **Tools** — `Read`, `Write`, `Edit`, `Bash`, `Grep`, `Glob`, `apply_patch`. Web search via server-side (Claude) or client fallback.
 
@@ -41,7 +41,7 @@ Update: `luma update`
 | `Tab` | Cycle mode (Rush → Smart → Deep) |
 | `Enter` | Send message |
 | `Alt+Enter` | Newline in prompt |
-| `Alt+V` | Paste clipboard image |
+| `Paste` | Text paste, or image if clipboard has no text |
 | `Ctrl+T` | Cycle thinking level |
 | `Escape` | Abort streaming (press twice) |
 | `Ctrl+C` | Abort streaming / clear input / quit |

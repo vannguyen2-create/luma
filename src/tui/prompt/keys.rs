@@ -129,6 +129,10 @@ impl super::PromptState {
                 PromptAction::Redraw
             }
             KeyEvent::Paste(text) => {
+                if text.is_empty() {
+                    // Empty paste = clipboard likely has image, not text
+                    return PromptAction::PasteImage;
+                }
                 self.insert_paste(text);
                 PromptAction::Redraw
             }
