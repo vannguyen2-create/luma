@@ -118,7 +118,7 @@ async fn apply_hunks(hunks: &[Hunk], tx: &mpsc::Sender<String>) -> Result<String
                     }
                 }
 
-                replacements.sort_by(|a, b| b.0.cmp(&a.0));
+                replacements.sort_by_key(|r| std::cmp::Reverse(r.0));
                 for (start, old_len, new_lines) in &replacements {
                     for _ in 0..*old_len {
                         if *start < lines.len() { lines.remove(*start); }

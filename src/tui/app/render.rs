@@ -268,11 +268,7 @@ impl super::App {
         let thumb_sub = (track_sub * visible / total).max(SUB); // min 1 cell
         let max_off = total.saturating_sub(visible);
         let scroll_sub = track_sub.saturating_sub(thumb_sub);
-        let start_sub = if max_off > 0 {
-            offset * scroll_sub / max_off
-        } else {
-            0
-        };
+        let start_sub = (offset * scroll_sub).checked_div(max_off).unwrap_or(0);
         let end_sub = start_sub + thumb_sub;
 
         let mut cells = Vec::with_capacity(track);

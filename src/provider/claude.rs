@@ -167,12 +167,11 @@ impl Provider for ClaudeProvider {
                                 });
                             }
                         }
-                        "server_tool_use" => {
-                            if block["name"] == "web_search" {
+                        "server_tool_use"
+                            if block["name"] == "web_search" => {
                                 in_server_tool = true;
                                 server_tool_json.clear();
                             }
-                        }
                         "web_search_tool_result" => {
                             let content_len = block["content"].as_array().map(|a| a.len()).unwrap_or(0);
                             crate::dbg_log!("claude web_search_tool_result: {} items in content", content_len);

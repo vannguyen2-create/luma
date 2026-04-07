@@ -103,7 +103,7 @@ impl Tool for GlobTool {
             }
 
             // Sort by mtime descending (newest first)
-            matches.sort_by(|a, b| b.1.cmp(&a.1));
+            matches.sort_by_key(|e| std::cmp::Reverse(e.1));
 
             let truncated = matches.len() >= MAX_RESULTS;
             let files: Vec<String> = matches.into_iter().map(|(p, _)| p).collect();

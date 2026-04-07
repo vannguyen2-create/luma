@@ -455,18 +455,16 @@ impl OutputLog {
     fn commit_last(&mut self) {
         let idx = self.blocks.len().wrapping_sub(1);
         match self.blocks.last_mut() {
-            Some(Block::Thinking(s)) => {
-                if !s.is_empty() {
+            Some(Block::Thinking(s))
+                if !s.is_empty() => {
                     s.flush();
                     self.cache.mark_dirty(idx);
                 }
-            }
-            Some(Block::Text(tb)) => {
-                if !tb.is_empty() {
+            Some(Block::Text(tb))
+                if !tb.is_empty() => {
                     tb.flush();
                     self.cache.mark_dirty(idx);
                 }
-            }
             Some(Block::Tool(tb)) if !tb.is_done => {
                 if let Some(stream) = &mut tb.stream {
                     stream.flush();

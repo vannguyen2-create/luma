@@ -139,7 +139,7 @@ impl Tool for GrepTool {
             }
 
             // Sort by mtime descending
-            matches.sort_by(|a, b| b.mtime.cmp(&a.mtime));
+            matches.sort_by_key(|e| std::cmp::Reverse(e.mtime));
 
             let mut lines = Vec::new();
             for m in &matches {
