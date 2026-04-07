@@ -25,6 +25,8 @@ jobs:
             os: ubuntu-latest
           - target: aarch64-unknown-linux-musl
             os: ubuntu-latest
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
 
     runs-on: ${{ matrix.os }}
 
@@ -51,13 +53,19 @@ jobs:
       - name: Build
         run: cargo build --release --target ${{ matrix.target }}
 
-      - name: Package
+      - name: Package (unix)
+        if: runner.os != 'Windows'
         run: tar czf luma-${{ matrix.target }}.tar.gz -C target/${{ matrix.target }}/release luma
+
+      - name: Package (windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: Compress-Archive -Path target/${{ matrix.target }}/release/luma.exe -DestinationPath luma-${{ matrix.target }}.zip
 
       - uses: actions/upload-artifact@v5
         with:
           name: luma-${{ matrix.target }}
-          path: luma-${{ matrix.target }}.tar.gz
+          path: luma-${{ matrix.target }}.*
 
   release:
     needs: build
@@ -77,4 +85,4 @@ jobs:
             --title "Luma ${{ github.ref_name }}" \
             --generate-notes \
             --prerelease \
-            artifacts/luma-*/luma-*.tar.gz
+            artifacts/luma-*/luma-*
