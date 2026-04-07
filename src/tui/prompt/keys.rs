@@ -3,6 +3,7 @@ use super::PromptAction;
 use crate::event::KeyEvent;
 
 const PASTE_PREVIEW_THRESHOLD: usize = 5;
+const IMAGE_EXTENSIONS: &[&str] = &["png", "jpg", "jpeg", "gif", "webp", "bmp", "tiff"];
 
 impl super::PromptState {
     /// Handle a key event. Returns what the app should do.
@@ -130,8 +131,11 @@ impl super::PromptState {
             }
             KeyEvent::Paste(text) => {
                 if text.is_empty() {
-                    // Empty paste = clipboard likely has image, not text
                     return PromptAction::PasteImage;
+                }
+                let trimmed = text.trim();
+                if !trimmed.contains('\n') && is_image_path(trimmed) {
+                    return PromptAction::PasteImagePath(trimmed.to_owned());
                 }
                 self.insert_paste(text);
                 PromptAction::Redraw
@@ -225,4 +229,13 @@ impl super::PromptState {
         self.cursor = self.char_count();
         PromptAction::Redraw
     }
+}
+
+/// Check if text looks like a path to an image file.
+fn is_image_path(text: &str) -> bool {
+    let path = std::path::Path::new(text);
+    path.extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|ext| IMAGE_EXTENSIONS.contains(&ext.to_lowercase().as_str()))
+        && path.is_file()
 }

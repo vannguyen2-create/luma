@@ -12,7 +12,6 @@ pub use completion::Command;
 pub struct AttachedImage {
     pub media_type: String,
     pub data: Vec<u8>,
-    pub label: String,
 }
 
 /// Prompt result after handling a key.
@@ -23,6 +22,7 @@ pub enum PromptAction {
     Interrupt,
     ToggleThinking,
     PasteImage,
+    PasteImagePath(String),
 }
 
 /// Input prompt state.
@@ -59,12 +59,8 @@ impl PromptState {
     }
 
     /// Attach an image to the current prompt.
-    pub fn attach_image(&mut self, media_type: String, data: Vec<u8>, label: String) {
-        self.images.push(AttachedImage {
-            media_type,
-            data,
-            label,
-        });
+    pub fn attach_image(&mut self, media_type: String, data: Vec<u8>) {
+        self.images.push(AttachedImage { media_type, data });
     }
 
     /// Take and clear attached images (called on submit).

@@ -228,6 +228,10 @@ impl super::App {
                 self.paste_clipboard_image();
                 Action::Render
             }
+            PromptAction::PasteImagePath(path) => {
+                self.paste_image_file(&path);
+                Action::Render
+            }
         }
     }
 }

@@ -68,11 +68,18 @@ impl super::App {
             self.ui.output.info("no image in clipboard");
             return;
         };
-        let (media_type, ext) = detect_image_format(&data);
-        let label = format!("image: screenshot.{ext}");
-        self.ui
-            .prompt
-            .attach_image(media_type.to_owned(), data, label);
+        let (media_type, _) = detect_image_format(&data);
+        self.ui.prompt.attach_image(media_type.to_owned(), data);
+    }
+
+    /// Read image from file path (drag-drop) and attach to prompt.
+    pub(super) fn paste_image_file(&mut self, path: &str) {
+        let Ok(data) = std::fs::read(path) else {
+            self.ui.output.info("cannot read image file");
+            return;
+        };
+        let (media_type, _) = detect_image_format(&data);
+        self.ui.prompt.attach_image(media_type.to_owned(), data);
     }
 
     /// Start agent loop if not running.

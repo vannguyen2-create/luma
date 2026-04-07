@@ -70,6 +70,10 @@ impl Span {
     pub fn deco_colored(text: impl Into<String>, fg: Rgb, bg: Rgb) -> Self {
         Self { text: text.into(), fg, bg: Some(bg), bold: false, italic: false, decoration: true }
     }
+    /// Create a span with background color.
+    pub fn with_bg(text: impl Into<String>, fg: Rgb, bg: Rgb) -> Self {
+        Self { text: text.into(), fg, bg: Some(bg), bold: false, italic: false, decoration: false }
+    }
     /// Create a bold span.
     pub fn bold(text: impl Into<String>, fg: Rgb) -> Self {
         Self { text: text.into(), fg, bg: None, bold: true, italic: false, decoration: false }
