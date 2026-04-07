@@ -53,9 +53,15 @@ async fn main() {
                 }
             }
         }
-        Some("version") => println!("luma 0.1.0"),
+        Some("update") => {
+            if let Err(e) = self_update() {
+                eprintln!("update failed: {e}");
+                std::process::exit(1);
+            }
+        }
+        Some("version" | "--version" | "-v") => println!("luma {}", env!("CARGO_PKG_VERSION")),
         Some("help" | "--help" | "-h") => {
-            println!("luma - lightweight coding agent\n\nusage:\n  luma              start TUI\n  luma sync         sync models\n  luma auth         show auth\n  luma version      version");
+            println!("luma - lightweight coding agent\n\nusage:\n  luma              start TUI\n  luma sync         sync models\n  luma auth         show auth\n  luma update       update to latest\n  luma version      version");
         }
         Some(unknown) => {
             eprintln!("unknown command: {unknown}\nrun 'luma help'");
@@ -79,6 +85,21 @@ async fn main() {
             }
         }
     }
+}
+
+/// Self-update: download and run install.sh from repo.
+fn self_update() -> anyhow::Result<()> {
+    let current = env!("CARGO_PKG_VERSION");
+    println!("current: v{current}");
+    println!("updating...");
+    let status = Command::new("sh")
+        .arg("-c")
+        .arg("curl -fsSL https://raw.githubusercontent.com/nghyane/luma/master/install.sh | sh")
+        .status()?;
+    if !status.success() {
+        anyhow::bail!("install script failed");
+    }
+    Ok(())
 }
 
 fn build_env_context() -> String {
