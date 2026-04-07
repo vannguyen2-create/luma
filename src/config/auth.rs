@@ -136,9 +136,8 @@ fn load_local(provider: AuthProvider) -> Result<ManagedEntry> {
 
 fn load_claude_local() -> Result<ManagedEntry> {
     // Try macOS keychain first
-    if cfg!(target_os = "macos")
-        && let Some(entry) = load_claude_keychain()
-    {
+    #[cfg(target_os = "macos")]
+    if let Some(entry) = load_claude_keychain() {
         return Ok(entry);
     }
     // Fall back to credentials file
@@ -147,6 +146,7 @@ fn load_claude_local() -> Result<ManagedEntry> {
     parse_claude_json(&raw).ok_or_else(|| anyhow::anyhow!("No Claude credentials. Log in with Claude Code first."))
 }
 
+#[cfg(target_os = "macos")]
 fn load_claude_keychain() -> Option<ManagedEntry> {
     let services = list_keychain_services();
     for svc in &services {
@@ -160,6 +160,7 @@ fn load_claude_keychain() -> Option<ManagedEntry> {
     None
 }
 
+#[cfg(target_os = "macos")]
 fn list_keychain_services() -> Vec<String> {
     let output = Command::new("security")
         .arg("dump-keychain")

@@ -171,14 +171,12 @@ impl super::App {
     }
 }
 
-/// Read image data from system clipboard.
-/// macOS: uses osascript to get clipboard image as PNG via a temp file.
+/// Read image data from system clipboard via osascript.
+#[cfg(target_os = "macos")]
 fn read_clipboard_image() -> Option<Vec<u8>> {
-    #[cfg(target_os = "macos")]
-    {
-        let tmp = std::env::temp_dir().join("luma_clipboard.png");
-        let script = format!(
-            r#"set theFile to POSIX file "{}"
+    let tmp = std::env::temp_dir().join("luma_clipboard.png");
+    let script = format!(
+        r#"set theFile to POSIX file "{}"
 try
     set theImage to the clipboard as «class PNGf»
     set fileRef to open for access theFile with write permission
@@ -191,27 +189,28 @@ on error
     end try
     error "no image"
 end try"#,
-            tmp.display()
-        );
-        let output = std::process::Command::new("osascript")
-            .arg("-e")
-            .arg(&script)
-            .output()
-            .ok()?;
-        if !output.status.success() {
-            return None;
-        }
-        let data = std::fs::read(&tmp).ok()?;
-        let _ = std::fs::remove_file(&tmp);
-        if data.is_empty() {
-            return None;
-        }
-        Some(data)
+        tmp.display()
+    );
+    let output = std::process::Command::new("osascript")
+        .arg("-e")
+        .arg(&script)
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
     }
-    #[cfg(not(target_os = "macos"))]
-    {
-        None
+    let data = std::fs::read(&tmp).ok()?;
+    let _ = std::fs::remove_file(&tmp);
+    if data.is_empty() {
+        return None;
     }
+    Some(data)
+}
+
+/// Clipboard image not yet supported on this platform.
+#[cfg(not(target_os = "macos"))]
+fn read_clipboard_image() -> Option<Vec<u8>> {
+    None
 }
 
 /// Detect image format from magic bytes.
