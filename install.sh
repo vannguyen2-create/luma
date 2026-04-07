@@ -12,7 +12,7 @@ ARCH="$(uname -m)"
 
 case "$OS" in
   Darwin) os="apple-darwin" ;;
-  Linux)  os="unknown-linux-gnu" ;;
+  Linux)  os="unknown-linux-musl" ;;
   *) echo "Unsupported OS: $OS" >&2; exit 1 ;;
 esac
 
