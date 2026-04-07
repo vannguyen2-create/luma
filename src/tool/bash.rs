@@ -1,7 +1,8 @@
-/// Bash tool — execute shell commands with streaming output and timeout.
+/// Shell tool — execute commands via platform shell with streaming output and timeout.
 use crate::core::tool::Tool;
 use crate::core::types::ToolSchema;
 use crate::tool::bash_safety;
+use crate::tool::shell;
 use anyhow::{bail, Result};
 use std::pin::Pin;
 use std::future::Future;
@@ -78,12 +79,7 @@ impl Tool for BashTool {
                 bail!("blocked dangerous command — {command}");
             }
 
-            let mut child = tokio::process::Command::new("bash")
-                .arg("-c")
-                .arg(command)
-                .stdout(std::process::Stdio::piped())
-                .stderr(std::process::Stdio::piped())
-                .spawn()?;
+            let mut child = shell::spawn(command)?;
 
             let mut stdout = child.stdout.take().expect("stdout piped");
             let mut stderr = child.stderr.take().expect("stderr piped");
@@ -186,7 +182,6 @@ fn accumulate(out: &mut String, tail: &mut String, truncated: &mut bool, chunk: 
 }
 
 #[cfg(test)]
-#[cfg(unix)]
 mod tests {
     use super::*;
 
@@ -232,7 +227,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn bash_cancel() {
+    #[cfg(unix)]
+    async fn cancel() {
         let tool = BashTool::claude();
         let (tx, _rx) = mpsc::channel(32);
         let cancel = CancellationToken::new();
@@ -245,6 +241,27 @@ mod tests {
 
         let result = tool.execute(
             serde_json::json!({"command": "sleep 10"}),
+            tx, cancel,
+        ).await.unwrap();
+
+        assert!(result.contains("[aborted]"));
+    }
+
+    #[tokio::test]
+    #[cfg(windows)]
+    async fn cancel() {
+        let tool = BashTool::claude();
+        let (tx, _rx) = mpsc::channel(32);
+        let cancel = CancellationToken::new();
+        let cancel_clone = cancel.clone();
+
+        tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+            cancel_clone.cancel();
+        });
+
+        let result = tool.execute(
+            serde_json::json!({"command": "ping -n 100 127.0.0.1"}),
             tx, cancel,
         ).await.unwrap();
 

@@ -3,6 +3,7 @@ pub mod write;
 pub mod edit;
 pub mod bash;
 mod bash_safety;
+mod shell;
 pub mod glob;
 pub mod grep;
 pub mod apply_patch;
