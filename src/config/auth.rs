@@ -3,7 +3,6 @@ use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
-use std::process::Command;
 
 /// Provider identity for auth.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -148,6 +147,7 @@ fn load_claude_local() -> Result<ManagedEntry> {
 
 #[cfg(target_os = "macos")]
 fn load_claude_keychain() -> Option<ManagedEntry> {
+    use std::process::Command;
     let services = list_keychain_services();
     for svc in &services {
         let output = Command::new("security")
@@ -162,6 +162,7 @@ fn load_claude_keychain() -> Option<ManagedEntry> {
 
 #[cfg(target_os = "macos")]
 fn list_keychain_services() -> Vec<String> {
+    use std::process::Command;
     let output = Command::new("security")
         .arg("dump-keychain")
         .output()
