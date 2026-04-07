@@ -21,7 +21,7 @@ Bất biến. Không ngoại lệ. Mỗi PR phải pass tất cả.
 9. **Test per module.** `#[cfg(test)] mod tests` trong mỗi file có logic. Viết code xong → viết test ngay. Minimum 1 test per `pub fn`.
 10. **Không TODO.** Dùng `todo!("mô tả")` — compiler panic nếu hit, không quên.
 11. **Không `unsafe`.** Toàn bộ project không cần unsafe.
-12. **Dependencies:** approve list: `tokio`, `reqwest`, `serde`, `serde_json`, `smallvec`, `tokio-util`, `thiserror`, `anyhow`. Thêm dep mới phải justify.
+12. **Dependencies:** approve list: `tokio`, `reqwest`, `serde`, `serde_json`, `smallvec`, `tokio-util`, `thiserror`, `anyhow`, `crossterm`. Thêm dep mới phải justify.
 13. **Clippy clean.** `cargo clippy -- -D warnings`. Không `#[allow(clippy::...)]` trừ false positive có comment giải thích.
 14. **Format:** `rustfmt` default. Không customize `rustfmt.toml`.
 
