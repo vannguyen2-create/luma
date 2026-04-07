@@ -2,18 +2,20 @@
 use super::state::{PickerMode, RunState};
 use super::{Action, ABORT_HINT_TICKS};
 use crate::config::models;
-use crate::event::{Event, KeyEvent};
+use crate::event::Event;
 use crate::tui::picker::PickerAction;
 use crate::tui::prompt::PromptAction;
+use crossterm::event::{Event as CtEvent, KeyCode, KeyEvent, KeyModifiers};
 
 impl super::App {
     /// Route an event to the appropriate handler.
     pub(super) fn handle(&mut self, event: Event) -> Action {
         if self.agent.state == RunState::Aborting {
             return match event {
-                Event::Key(k) => self.on_key(k),
-                Event::Mouse(m) => self.on_mouse(m),
-                Event::Resize { w, h } => {
+                Event::Term(CtEvent::Key(k)) => self.on_key(k),
+                Event::Term(CtEvent::Mouse(m)) => self.on_mouse(m),
+                Event::Term(CtEvent::Paste(text)) => self.on_paste(text),
+                Event::Term(CtEvent::Resize(w, h)) => {
                     self.handle_resize(w, h);
                     Action::Render
                 }
@@ -37,12 +39,14 @@ impl super::App {
         }
 
         match event {
-            Event::Key(k) => self.on_key(k),
-            Event::Mouse(m) => self.on_mouse(m),
-            Event::Resize { w, h } => {
+            Event::Term(CtEvent::Key(k)) => self.on_key(k),
+            Event::Term(CtEvent::Mouse(m)) => self.on_mouse(m),
+            Event::Term(CtEvent::Paste(text)) => self.on_paste(text),
+            Event::Term(CtEvent::Resize(w, h)) => {
                 self.handle_resize(w, h);
                 Action::Render
             }
+            Event::Term(_) => Action::Continue,
             Event::Tick => {
                 let active = matches!(
                     self.agent.state,
@@ -63,9 +67,6 @@ impl super::App {
                     Action::Continue
                 }
             }
-            // Streaming events: buffer only, render on next Tick (~80ms).
-            // Rendering on every token causes stdout flush storms that can
-            // deadlock the entire process when the terminal can't keep up.
             Event::Token(t) => {
                 crate::dbg_log!("token: {}B", t.len());
                 self.ui.output.append_token(&t);
@@ -89,7 +90,6 @@ impl super::App {
                 self.ui.output.tool_output(&name, &chunk);
                 Action::Continue
             }
-            // Structural events: render immediately (infrequent, 1 per tool call).
             Event::ToolStart { name, summary } => {
                 crate::dbg_log!("tool_start {name} {summary}");
                 self.ui.output.tool_start(&name, &summary);
@@ -111,11 +111,9 @@ impl super::App {
                 } else {
                     format!("{} results", results.len())
                 };
-                // Update summary with query if it wasn't available at start time
                 if !query.is_empty() {
                     self.ui.output.tool_start("web_search", &query);
                 }
-                // Feed structured results
                 for hit in &results {
                     let mut entry = format!("{}\n{}\n", hit.title, hit.url);
                     if !hit.snippet.is_empty() {
@@ -140,8 +138,6 @@ impl super::App {
                     usage.cache_read.unwrap_or(0),
                     usage.cache_write.unwrap_or(0),
                 );
-                // Total context = uncached input + cached (read+write) + output.
-                // Anthropic: input_tokens = uncached only, cache tokens are additional.
                 let total = usage.input_tokens
                     + usage.cache_read.unwrap_or(0)
                     + usage.cache_write.unwrap_or(0)
@@ -175,8 +171,13 @@ impl super::App {
     /// Handle keyboard input — escape, picker, tab, prompt keys.
     pub(super) fn on_key(&mut self, key: KeyEvent) -> Action {
         crate::dbg_log!("key {:?} state={:?}", key, self.agent.state);
+
+        let is_esc = key.code == KeyCode::Esc;
+        let is_ctrl_c =
+            key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL);
+
         // Escape or Ctrl+C during streaming → abort agent
-        if key == KeyEvent::Escape || key == KeyEvent::CtrlC {
+        if is_esc || is_ctrl_c {
             if self.agent.state == RunState::PendingAbort {
                 self.agent.state = RunState::Aborting;
                 self.ui.output.abort();
@@ -190,13 +191,13 @@ impl super::App {
                 self.agent.abort_countdown = ABORT_HINT_TICKS;
                 return Action::Render;
             }
-            if key == KeyEvent::Escape && self.agent.state != RunState::Idle {
+            if is_esc && self.agent.state != RunState::Idle {
                 return Action::Continue;
             }
         }
 
         if self.ui.picker.is_active {
-            match self.ui.picker.handle_key(key) {
+            match self.ui.picker.handle_key(&key) {
                 PickerAction::Select(id) => {
                     match self.config.picker_mode {
                         PickerMode::Model => self.select_model(&id),
@@ -210,12 +211,15 @@ impl super::App {
             }
         }
 
-        if key == KeyEvent::Tab && self.agent.state == RunState::Idle {
+        if key.code == KeyCode::Tab
+            && key.modifiers.is_empty()
+            && self.agent.state == RunState::Idle
+        {
             self.quick_cycle_mode();
             return Action::Render;
         }
 
-        match self.ui.prompt.handle_key(key) {
+        match self.ui.prompt.handle_key(&key) {
             PromptAction::None => Action::Continue,
             PromptAction::Redraw => Action::Render,
             PromptAction::Submit(text) => self.on_submit(text),
@@ -232,6 +236,26 @@ impl super::App {
                 self.paste_image_file(&path);
                 Action::Render
             }
+        }
+    }
+
+    /// Handle bracketed paste from terminal.
+    pub(super) fn on_paste(&mut self, text: String) -> Action {
+        crate::dbg_log!("paste: {}B", text.len());
+        match self.ui.prompt.handle_paste(text) {
+            PromptAction::None => Action::Continue,
+            PromptAction::Redraw => Action::Render,
+            PromptAction::PasteImage => {
+                self.paste_clipboard_image();
+                Action::Render
+            }
+            PromptAction::PasteImagePath(path) => {
+                self.paste_image_file(&path);
+                Action::Render
+            }
+            PromptAction::Submit(_)
+            | PromptAction::Interrupt
+            | PromptAction::ToggleThinking => Action::Render,
         }
     }
 }

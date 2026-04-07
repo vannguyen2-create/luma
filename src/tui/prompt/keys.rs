@@ -1,26 +1,43 @@
 /// Key handling — keystrokes, paste, history, dropdown navigation.
 use super::PromptAction;
-use crate::event::KeyEvent;
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 const PASTE_PREVIEW_THRESHOLD: usize = 5;
 const IMAGE_EXTENSIONS: &[&str] = &["png", "jpg", "jpeg", "gif", "webp", "bmp", "tiff"];
 
 impl super::PromptState {
     /// Handle a key event. Returns what the app should do.
-    pub fn handle_key(&mut self, key: KeyEvent) -> PromptAction {
+    pub fn handle_key(&mut self, key: &KeyEvent) -> PromptAction {
         if self.paste.is_some() {
             return self.handle_paste_key(key);
         }
-        if self.has_dropdown() && let Some(action) = self.handle_dropdown_key(&key) {
+        if self.has_dropdown() && let Some(action) = self.handle_dropdown_key(key) {
             return action;
         }
         self.handle_normal_key(key)
     }
 
-    fn handle_paste_key(&mut self, key: KeyEvent) -> PromptAction {
-        match key {
-            KeyEvent::Enter => self.submit_paste(),
-            KeyEvent::Escape | KeyEvent::CtrlC => {
+    /// Handle a bracketed paste event (crossterm Event::Paste).
+    pub fn handle_paste(&mut self, text: String) -> PromptAction {
+        if text.is_empty() {
+            return PromptAction::PasteImage;
+        }
+        let trimmed = text.trim();
+        if !trimmed.contains('\n') && is_image_path(trimmed) {
+            return PromptAction::PasteImagePath(trimmed.to_owned());
+        }
+        self.insert_paste(text);
+        PromptAction::Redraw
+    }
+
+    fn handle_paste_key(&mut self, key: &KeyEvent) -> PromptAction {
+        match key.code {
+            KeyCode::Enter => self.submit_paste(),
+            KeyCode::Esc => {
+                self.paste = None;
+                PromptAction::Redraw
+            }
+            KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                 self.paste = None;
                 PromptAction::Redraw
             }
@@ -29,21 +46,21 @@ impl super::PromptState {
     }
 
     fn handle_dropdown_key(&mut self, key: &KeyEvent) -> Option<PromptAction> {
-        match key {
-            KeyEvent::ArrowUp => {
+        match key.code {
+            KeyCode::Up => {
                 self.comp.dropdown_idx = self.comp.dropdown_idx.saturating_sub(1);
                 Some(PromptAction::Redraw)
             }
-            KeyEvent::ArrowDown => {
+            KeyCode::Down => {
                 let count = self.dropdown_count();
                 self.comp.dropdown_idx = (self.comp.dropdown_idx + 1).min(count.saturating_sub(1));
                 Some(PromptAction::Redraw)
             }
-            KeyEvent::Tab | KeyEvent::Enter => {
+            KeyCode::Tab | KeyCode::Enter => {
                 self.accept_dropdown();
                 Some(PromptAction::Redraw)
             }
-            KeyEvent::Escape => {
+            KeyCode::Esc => {
                 self.buffer.clear();
                 self.cursor = 0;
                 self.comp.dropdown_idx = 0;
@@ -53,14 +70,23 @@ impl super::PromptState {
         }
     }
 
-    fn handle_normal_key(&mut self, key: KeyEvent) -> PromptAction {
-        match key {
-            KeyEvent::Enter => self.on_enter(),
-            KeyEvent::Tab => {
+    fn handle_normal_key(&mut self, key: &KeyEvent) -> PromptAction {
+        let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+        let alt = key.modifiers.contains(KeyModifiers::ALT);
+
+        match key.code {
+            KeyCode::Enter if alt => {
+                let byte_pos = self.char_to_byte(self.cursor);
+                self.buffer.insert(byte_pos, '\n');
+                self.cursor += 1;
+                PromptAction::Redraw
+            }
+            KeyCode::Enter => self.on_enter(),
+            KeyCode::Tab => {
                 self.apply_ghost();
                 PromptAction::Redraw
             }
-            KeyEvent::CtrlC => {
+            KeyCode::Char('c') if ctrl => {
                 if self.buffer.is_empty() {
                     PromptAction::Interrupt
                 } else {
@@ -69,8 +95,23 @@ impl super::PromptState {
                     PromptAction::Redraw
                 }
             }
-            KeyEvent::CtrlT => PromptAction::ToggleThinking,
-            KeyEvent::Escape => {
+            KeyCode::Char('t') if ctrl => PromptAction::ToggleThinking,
+            KeyCode::Char('a') if ctrl => {
+                self.cursor = 0;
+                PromptAction::Redraw
+            }
+            KeyCode::Char('e') if ctrl => {
+                self.cursor = self.char_count();
+                PromptAction::Redraw
+            }
+            KeyCode::Char('u') if ctrl => {
+                let byte_pos = self.char_to_byte(self.cursor);
+                self.buffer = self.buffer[byte_pos..].to_owned();
+                self.cursor = 0;
+                PromptAction::Redraw
+            }
+            KeyCode::Char('v') if alt => PromptAction::PasteImage,
+            KeyCode::Esc => {
                 if self.is_command_mode() || self.buffer.contains('\n') {
                     self.buffer.clear();
                     self.cursor = 0;
@@ -79,7 +120,7 @@ impl super::PromptState {
                     PromptAction::None
                 }
             }
-            KeyEvent::Backspace => {
+            KeyCode::Backspace => {
                 if self.cursor > 0 {
                     let byte_pos = self.char_to_byte(self.cursor - 1);
                     let next_byte = self.char_to_byte(self.cursor);
@@ -89,31 +130,17 @@ impl super::PromptState {
                 self.comp.dropdown_idx = 0;
                 PromptAction::Redraw
             }
-            KeyEvent::ArrowUp => self.history_prev(),
-            KeyEvent::ArrowDown => self.history_next(),
-            KeyEvent::ArrowLeft => {
+            KeyCode::Up => self.history_prev(),
+            KeyCode::Down => self.history_next(),
+            KeyCode::Left => {
                 self.cursor = self.cursor.saturating_sub(1);
                 PromptAction::Redraw
             }
-            KeyEvent::ArrowRight => {
+            KeyCode::Right => {
                 self.cursor = (self.cursor + 1).min(self.char_count());
                 PromptAction::Redraw
             }
-            KeyEvent::CtrlA => {
-                self.cursor = 0;
-                PromptAction::Redraw
-            }
-            KeyEvent::CtrlE => {
-                self.cursor = self.char_count();
-                PromptAction::Redraw
-            }
-            KeyEvent::CtrlU => {
-                let byte_pos = self.char_to_byte(self.cursor);
-                self.buffer = self.buffer[byte_pos..].to_owned();
-                self.cursor = 0;
-                PromptAction::Redraw
-            }
-            KeyEvent::Char(c) => {
+            KeyCode::Char(c) => {
                 let byte_pos = self.char_to_byte(self.cursor);
                 self.buffer.insert(byte_pos, c);
                 self.cursor += 1;
@@ -123,24 +150,7 @@ impl super::PromptState {
                 }
                 PromptAction::Redraw
             }
-            KeyEvent::AltEnter => {
-                let byte_pos = self.char_to_byte(self.cursor);
-                self.buffer.insert(byte_pos, '\n');
-                self.cursor += 1;
-                PromptAction::Redraw
-            }
-            KeyEvent::Paste(text) => {
-                if text.is_empty() {
-                    return PromptAction::PasteImage;
-                }
-                let trimmed = text.trim();
-                if !trimmed.contains('\n') && is_image_path(trimmed) {
-                    return PromptAction::PasteImagePath(trimmed.to_owned());
-                }
-                self.insert_paste(text);
-                PromptAction::Redraw
-            }
-            KeyEvent::AltV => PromptAction::PasteImage,
+            _ => PromptAction::None,
         }
     }
 

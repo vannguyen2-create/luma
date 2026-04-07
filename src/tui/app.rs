@@ -20,6 +20,7 @@ use crate::tui::status::StatusBar;
 use crate::tui::term;
 use crate::tui::text::{Line, Padding};
 use crate::tui::theme::{CONTENT_PAD, OUTER_MARGIN, palette};
+use crossterm::terminal;
 use std::io::Write;
 use std::time::Duration;
 use tokio::sync::mpsc;
@@ -125,7 +126,7 @@ pub struct App {
 impl App {
     /// Create the app.
     pub fn new(env_context: String) -> Self {
-        let (w, h) = term::size();
+        let (w, h) = terminal::size().unwrap_or((80, 24));
         let layout = compute_layout(w, h);
         let mut renderer = Renderer::new(w, h);
         renderer.define("output", layout.output.clone());
@@ -207,21 +208,38 @@ impl App {
         }
     }
 
+    /// Enter crossterm raw mode and enable terminal features.
+    fn enter_terminal(out: &mut impl Write) -> anyhow::Result<()> {
+        terminal::enable_raw_mode()?;
+        crossterm::execute!(
+            out,
+            terminal::EnterAlternateScreen,
+            crossterm::event::EnableMouseCapture,
+            crossterm::event::EnableBracketedPaste,
+            crossterm::cursor::Hide,
+        )?;
+        Ok(())
+    }
+
+    /// Restore terminal to normal mode.
+    fn exit_terminal(out: &mut impl Write) {
+        let _ = crossterm::execute!(
+            out,
+            crossterm::event::DisableBracketedPaste,
+            crossterm::event::DisableMouseCapture,
+            crossterm::cursor::Show,
+            terminal::LeaveAlternateScreen,
+        );
+        let _ = terminal::disable_raw_mode();
+    }
+
     /// Run the event loop.
     pub async fn run(mut self) -> anyhow::Result<()> {
         let (tx, mut rx) = mpsc::channel::<Event>(256);
         self.tx = Some(tx.clone());
 
-        let orig = term::enter_raw()?;
         let mut out = term::buffered_stdout();
-        write!(
-            out,
-            "{}{}{}{}",
-            term::ALT_ON,
-            term::CURSOR_HIDE,
-            term::MOUSE_ON,
-            term::PASTE_ON,
-        )?;
+        Self::enter_terminal(&mut out)?;
         out.flush()?;
         self.renderer.clear_screen();
 
@@ -254,21 +272,6 @@ impl App {
             }
         });
 
-        let tx_resize = tx.clone();
-        tokio::spawn(async move {
-            if let Ok(mut sig) =
-                tokio::signal::unix::signal(tokio::signal::unix::SignalKind::window_change())
-            {
-                loop {
-                    sig.recv().await;
-                    let (w, h) = term::size();
-                    if tx_resize.send(Event::Resize { w, h }).await.is_err() {
-                        break;
-                    }
-                }
-            }
-        });
-
         // Bounded-drain event loop: recv first → drain up to DRAIN_BUDGET → render.
         loop {
             let Some(event) = rx.recv().await else { break };
@@ -282,17 +285,7 @@ impl App {
                         if self.process_event(event) {
                             self.render();
                             let mut out = term::buffered_stdout();
-                            write!(
-                                out,
-                                "{}{}{}{}{}",
-                                term::PASTE_OFF,
-                                term::MOUSE_OFF,
-                                term::CURSOR_SHOW,
-                                term::RESET,
-                                term::ALT_OFF,
-                            )?;
-                            out.flush()?;
-                            term::exit_raw(&orig);
+                            Self::exit_terminal(&mut out);
                             std::process::exit(0);
                         }
                         drained += 1;
@@ -304,17 +297,7 @@ impl App {
         }
 
         let mut out = term::buffered_stdout();
-        write!(
-            out,
-            "{}{}{}{}{}",
-            term::PASTE_OFF,
-            term::MOUSE_OFF,
-            term::CURSOR_SHOW,
-            term::RESET,
-            term::ALT_OFF,
-        )?;
-        out.flush()?;
-        term::exit_raw(&orig);
+        Self::exit_terminal(&mut out);
         std::process::exit(0);
     }
 }
@@ -380,15 +363,12 @@ mod tests {
     /// With unbounded drain, a continuously-fed queue starves render.
     #[test]
     fn bounded_drain_prevents_starvation() {
-        // Simulate: queue of 500 events, each processed event
-        // causes 1 new event (producer keeps up with consumer).
         let total_budget = 500usize;
         let mut queue = std::collections::VecDeque::from_iter(0..total_budget);
         let mut renders = 0usize;
         let mut processed = 0usize;
         let budget = DRAIN_BUDGET;
 
-        // Simulate the bounded-drain loop
         while let Some(_event) = queue.pop_front() {
             processed += 1;
             let mut drained = 1usize;
@@ -396,21 +376,17 @@ mod tests {
                 if let Some(_e) = queue.pop_front() {
                     processed += 1;
                     drained += 1;
-                    // Producer adds 1 event per processed event
                     queue.push_back(0);
                 } else {
                     break;
                 }
             }
             renders += 1;
-            // Stop after enough processing to prove the point
             if processed >= 2000 {
                 break;
             }
         }
 
-        // With budget=64, 2000 events should yield at least 30 renders
-        // (2000/64 = 31.25). Unbounded drain would yield exactly 1.
         assert!(
             renders >= 20,
             "bounded drain should render frequently: renders={renders} processed={processed}"

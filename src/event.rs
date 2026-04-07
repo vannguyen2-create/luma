@@ -2,65 +2,6 @@
 /// flow through a single `mpsc::channel<Event>`. The app loop matches exhaustively.
 use crate::core::types::Usage;
 
-/// A keyboard or control key event.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum KeyEvent {
-    Char(char),
-    Enter,
-    Tab,
-    Backspace,
-    Escape,
-    CtrlC,
-    CtrlT,
-    CtrlA,
-    CtrlE,
-    CtrlU,
-    ArrowUp,
-    ArrowDown,
-    ArrowLeft,
-    ArrowRight,
-    Paste(String),
-    AltEnter,
-    AltV,
-}
-
-/// Mouse button identity.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum MouseButton {
-    Left,
-    Middle,
-    Right,
-    None,
-}
-
-/// A parsed mouse event from SGR mode 1002.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum MouseEvent {
-    Press {
-        button: MouseButton,
-        row: u16,
-        col: u16,
-    },
-    Release {
-        button: MouseButton,
-        row: u16,
-        col: u16,
-    },
-    Drag {
-        button: MouseButton,
-        row: u16,
-        col: u16,
-    },
-    ScrollUp {
-        row: u16,
-        col: u16,
-    },
-    ScrollDown {
-        row: u16,
-        col: u16,
-    },
-}
-
 /// A single web search result.
 #[derive(Debug, Clone)]
 pub struct SearchHit {
@@ -72,12 +13,8 @@ pub struct SearchHit {
 /// Every event the app loop handles.
 #[derive(Debug, Clone)]
 pub enum Event {
-    Key(KeyEvent),
-    Mouse(MouseEvent),
-    Resize {
-        w: u16,
-        h: u16,
-    },
+    /// Terminal event from crossterm (key, mouse, resize, paste, focus).
+    Term(crossterm::event::Event),
 
     Token(String),
     Thinking(String),
@@ -159,26 +96,5 @@ mod tests {
     fn event_is_send() {
         fn assert_send<T: Send>() {}
         assert_send::<Event>();
-    }
-
-    #[test]
-    fn key_event_eq() {
-        assert_eq!(KeyEvent::Char('a'), KeyEvent::Char('a'));
-        assert_ne!(KeyEvent::Char('a'), KeyEvent::Char('b'));
-    }
-
-    #[test]
-    fn mouse_event_variants() {
-        let press = MouseEvent::Press {
-            button: MouseButton::Left,
-            row: 1,
-            col: 1,
-        };
-        let release = MouseEvent::Release {
-            button: MouseButton::Left,
-            row: 1,
-            col: 1,
-        };
-        assert_ne!(press, release);
     }
 }

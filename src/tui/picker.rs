@@ -1,7 +1,7 @@
 /// Interactive model picker overlay.
-use crate::event::KeyEvent;
 use crate::tui::text::{Line, Span};
 use crate::tui::theme::{icon, palette};
+use crossterm::event::{KeyCode, KeyEvent};
 use smallvec::smallvec;
 
 /// Picker result after handling a key.
@@ -40,25 +40,33 @@ impl Picker {
     }
 
     /// Handle a key event. Returns what the app should do.
-    pub fn handle_key(&mut self, key: KeyEvent) -> PickerAction {
+    pub fn handle_key(&mut self, key: &KeyEvent) -> PickerAction {
         if !self.is_active {
             return PickerAction::None;
         }
-        match key {
-            KeyEvent::ArrowUp => {
+        match key.code {
+            KeyCode::Up => {
                 self.selected = self.selected.saturating_sub(1);
                 PickerAction::Redraw
             }
-            KeyEvent::ArrowDown => {
+            KeyCode::Down => {
                 self.selected = (self.selected + 1).min(self.items.len().saturating_sub(1));
                 PickerAction::Redraw
             }
-            KeyEvent::Enter => {
+            KeyCode::Enter => {
                 let model = self.items.get(self.selected).cloned().unwrap_or_default();
                 self.is_active = false;
                 PickerAction::Select(model)
             }
-            KeyEvent::Escape | KeyEvent::CtrlC => {
+            KeyCode::Esc => {
+                self.is_active = false;
+                PickerAction::Cancel
+            }
+            KeyCode::Char('c')
+                if key
+                    .modifiers
+                    .contains(crossterm::event::KeyModifiers::CONTROL) =>
+            {
                 self.is_active = false;
                 PickerAction::Cancel
             }
@@ -117,6 +125,15 @@ impl Picker {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crossterm::event::KeyModifiers;
+
+    fn key(code: KeyCode) -> KeyEvent {
+        KeyEvent::new(code, KeyModifiers::NONE)
+    }
+
+    fn ctrl(c: char) -> KeyEvent {
+        KeyEvent::new(KeyCode::Char(c), KeyModifiers::CONTROL)
+    }
 
     #[test]
     fn open_and_select() {
@@ -131,9 +148,9 @@ mod tests {
     fn navigate_and_confirm() {
         let mut p = Picker::new();
         p.open(vec!["x".into(), "y".into(), "z".into()], "x");
-        p.handle_key(KeyEvent::ArrowDown);
+        p.handle_key(&key(KeyCode::Down));
         assert_eq!(p.selected, 1);
-        match p.handle_key(KeyEvent::Enter) {
+        match p.handle_key(&key(KeyCode::Enter)) {
             PickerAction::Select(s) => assert_eq!(s, "y"),
             _ => panic!("expected Select"),
         }
@@ -145,9 +162,17 @@ mod tests {
         let mut p = Picker::new();
         p.open(vec!["a".into()], "a");
         assert!(matches!(
-            p.handle_key(KeyEvent::Escape),
+            p.handle_key(&key(KeyCode::Esc)),
             PickerAction::Cancel
         ));
+        assert!(!p.is_active);
+    }
+
+    #[test]
+    fn cancel_ctrl_c() {
+        let mut p = Picker::new();
+        p.open(vec!["a".into()], "a");
+        assert!(matches!(p.handle_key(&ctrl('c')), PickerAction::Cancel));
         assert!(!p.is_active);
     }
 
@@ -163,9 +188,9 @@ mod tests {
     fn bounds_clamping() {
         let mut p = Picker::new();
         p.open(vec!["only".into()], "only");
-        p.handle_key(KeyEvent::ArrowUp); // should stay at 0
+        p.handle_key(&key(KeyCode::Up)); // should stay at 0
         assert_eq!(p.selected, 0);
-        p.handle_key(KeyEvent::ArrowDown); // should stay at 0
+        p.handle_key(&key(KeyCode::Down)); // should stay at 0
         assert_eq!(p.selected, 0);
     }
 }

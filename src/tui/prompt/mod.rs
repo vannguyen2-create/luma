@@ -216,11 +216,23 @@ impl PromptState {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::event::KeyEvent;
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+    fn key(code: KeyCode) -> KeyEvent {
+        KeyEvent::new(code, KeyModifiers::NONE)
+    }
+
+    fn ctrl(c: char) -> KeyEvent {
+        KeyEvent::new(KeyCode::Char(c), KeyModifiers::CONTROL)
+    }
+
+    fn alt(code: KeyCode) -> KeyEvent {
+        KeyEvent::new(code, KeyModifiers::ALT)
+    }
 
     fn type_str(p: &mut PromptState, s: &str) {
         for c in s.chars() {
-            p.handle_key(KeyEvent::Char(c));
+            p.handle_key(&key(KeyCode::Char(c)));
         }
     }
 
@@ -228,7 +240,7 @@ mod tests {
     fn type_and_submit() {
         let mut p = PromptState::new();
         type_str(&mut p, "hello");
-        match p.handle_key(KeyEvent::Enter) {
+        match p.handle_key(&key(KeyCode::Enter)) {
             PromptAction::Submit(text) => assert_eq!(text, "hello"),
             _ => panic!("expected Submit"),
         }
@@ -238,7 +250,7 @@ mod tests {
     fn empty_enter_no_submit() {
         let mut p = PromptState::new();
         assert!(matches!(
-            p.handle_key(KeyEvent::Enter),
+            p.handle_key(&key(KeyCode::Enter)),
             PromptAction::Redraw
         ));
     }
@@ -247,12 +259,12 @@ mod tests {
     fn history_navigation() {
         let mut p = PromptState::new();
         type_str(&mut p, "first");
-        p.handle_key(KeyEvent::Enter);
+        p.handle_key(&key(KeyCode::Enter));
         type_str(&mut p, "second");
-        p.handle_key(KeyEvent::Enter);
-        p.handle_key(KeyEvent::ArrowUp);
+        p.handle_key(&key(KeyCode::Enter));
+        p.handle_key(&key(KeyCode::Up));
         assert_eq!(p.buffer, "second");
-        p.handle_key(KeyEvent::ArrowUp);
+        p.handle_key(&key(KeyCode::Up));
         assert_eq!(p.buffer, "first");
     }
 
@@ -260,9 +272,9 @@ mod tests {
     fn history_only_when_empty() {
         let mut p = PromptState::new();
         type_str(&mut p, "first");
-        p.handle_key(KeyEvent::Enter);
+        p.handle_key(&key(KeyCode::Enter));
         type_str(&mut p, "x");
-        p.handle_key(KeyEvent::ArrowUp);
+        p.handle_key(&key(KeyCode::Up));
         assert_eq!(p.buffer, "x");
     }
 
@@ -279,7 +291,7 @@ mod tests {
         let mut p = PromptState::new();
         p.add_command("new", "new thread");
         type_str(&mut p, "/new");
-        match p.handle_key(KeyEvent::Enter) {
+        match p.handle_key(&key(KeyCode::Enter)) {
             PromptAction::Submit(cmd) => assert_eq!(cmd, "/new"),
             _ => panic!("expected Submit"),
         }
@@ -290,7 +302,7 @@ mod tests {
         let mut p = PromptState::new();
         type_str(&mut p, "hello");
         assert!(matches!(
-            p.handle_key(KeyEvent::CtrlC),
+            p.handle_key(&ctrl('c')),
             PromptAction::Redraw
         ));
         assert!(p.buffer.is_empty());
@@ -300,7 +312,7 @@ mod tests {
     fn ctrl_c_empty_interrupts() {
         let mut p = PromptState::new();
         assert!(matches!(
-            p.handle_key(KeyEvent::CtrlC),
+            p.handle_key(&ctrl('c')),
             PromptAction::Interrupt
         ));
     }
@@ -316,7 +328,7 @@ mod tests {
     fn paste_single_line_inline() {
         let mut p = PromptState::new();
         type_str(&mut p, "pre ");
-        p.handle_key(KeyEvent::Paste("hello".into()));
+        p.handle_paste("hello".into());
         assert_eq!(p.buffer, "pre hello");
         assert!(!p.has_paste());
     }
@@ -324,7 +336,7 @@ mod tests {
     #[test]
     fn paste_short_multiline_inline() {
         let mut p = PromptState::new();
-        p.handle_key(KeyEvent::Paste("a\nb\nc".into()));
+        p.handle_paste("a\nb\nc".into());
         assert!(!p.has_paste());
         assert_eq!(p.buffer, "a\nb\nc");
     }
@@ -332,15 +344,15 @@ mod tests {
     #[test]
     fn paste_long_multiline_preview() {
         let mut p = PromptState::new();
-        p.handle_key(KeyEvent::Paste("1\n2\n3\n4\n5".into()));
+        p.handle_paste("1\n2\n3\n4\n5".into());
         assert!(p.has_paste());
     }
 
     #[test]
     fn paste_enter_submits() {
         let mut p = PromptState::new();
-        p.handle_key(KeyEvent::Paste("1\n2\n3\n4\n5".into()));
-        match p.handle_key(KeyEvent::Enter) {
+        p.handle_paste("1\n2\n3\n4\n5".into());
+        match p.handle_key(&key(KeyCode::Enter)) {
             PromptAction::Submit(text) => assert_eq!(text, "1\n2\n3\n4\n5"),
             _ => panic!("expected Submit"),
         }
@@ -349,8 +361,8 @@ mod tests {
     #[test]
     fn paste_escape_cancels() {
         let mut p = PromptState::new();
-        p.handle_key(KeyEvent::Paste("1\n2\n3\n4\n5".into()));
-        p.handle_key(KeyEvent::Escape);
+        p.handle_paste("1\n2\n3\n4\n5".into());
+        p.handle_key(&key(KeyCode::Esc));
         assert!(!p.has_paste());
     }
 
@@ -358,8 +370,8 @@ mod tests {
     fn paste_with_existing_buffer() {
         let mut p = PromptState::new();
         type_str(&mut p, "prefix");
-        p.handle_key(KeyEvent::Paste("1\n2\n3\n4\n5".into()));
-        match p.handle_key(KeyEvent::Enter) {
+        p.handle_paste("1\n2\n3\n4\n5".into());
+        match p.handle_key(&key(KeyCode::Enter)) {
             PromptAction::Submit(text) => assert!(text.starts_with("prefix\n")),
             _ => panic!("expected Submit"),
         }
@@ -369,7 +381,7 @@ mod tests {
     fn alt_enter_newline() {
         let mut p = PromptState::new();
         type_str(&mut p, "line1");
-        p.handle_key(KeyEvent::AltEnter);
+        p.handle_key(&alt(KeyCode::Enter));
         type_str(&mut p, "line2");
         assert_eq!(p.buffer, "line1\nline2");
     }
@@ -378,7 +390,7 @@ mod tests {
     fn multiline_cursor_column() {
         let mut p = PromptState::new();
         type_str(&mut p, "abc");
-        p.handle_key(KeyEvent::AltEnter);
+        p.handle_key(&alt(KeyCode::Enter));
         type_str(&mut p, "xy");
         assert_eq!(p.cursor_column(), 2);
     }
@@ -430,9 +442,9 @@ mod tests {
         type_str(&mut p, "/");
         assert!(p.has_dropdown());
         assert_eq!(p.comp.dropdown_idx, 0);
-        p.handle_key(KeyEvent::ArrowDown);
+        p.handle_key(&key(KeyCode::Down));
         assert_eq!(p.comp.dropdown_idx, 1);
-        p.handle_key(KeyEvent::ArrowUp);
+        p.handle_key(&key(KeyCode::Up));
         assert_eq!(p.comp.dropdown_idx, 0);
     }
 
@@ -442,8 +454,8 @@ mod tests {
         p.add_command("model", "switch model");
         p.add_command("new", "new thread");
         type_str(&mut p, "/");
-        p.handle_key(KeyEvent::ArrowDown);
-        p.handle_key(KeyEvent::Enter);
+        p.handle_key(&key(KeyCode::Down));
+        p.handle_key(&key(KeyCode::Enter));
         assert_eq!(p.buffer, "/new");
     }
 
@@ -453,9 +465,9 @@ mod tests {
         p.add_command("model", "switch model");
         p.add_command("new", "new thread");
         type_str(&mut p, "/");
-        p.handle_key(KeyEvent::ArrowDown);
+        p.handle_key(&key(KeyCode::Down));
         assert_eq!(p.comp.dropdown_idx, 1);
-        p.handle_key(KeyEvent::Char('m'));
+        p.handle_key(&key(KeyCode::Char('m')));
         assert_eq!(p.comp.dropdown_idx, 0);
     }
 

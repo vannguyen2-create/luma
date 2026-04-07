@@ -1,11 +1,11 @@
 /// App rendering — mouse handling, screen composition, scrollbar, selection.
 use super::state::{DragState, RunState};
 use super::{Action, SCROLL_STEP};
-use crate::event::{MouseButton, MouseEvent};
 use crate::tui::renderer::{CursorState, Overlay};
 use crate::tui::selection;
 use crate::tui::text::{Line, Span};
 use crate::tui::theme::{icon, palette};
+use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
 use smallvec::smallvec;
 
 impl super::App {
@@ -22,18 +22,22 @@ impl super::App {
         let has_sb = total > visible;
         let sb_col = self.layout.output.col + r_width - 1;
 
-        match ev {
-            MouseEvent::ScrollUp { row, .. } if in_output(row) => {
+        // crossterm uses 0-based row/column; our layout uses 1-based.
+        let row = ev.row + 1;
+        let col = ev.column + 1;
+
+        match ev.kind {
+            MouseEventKind::ScrollUp if in_output(row) => {
                 self.ui.output.scroll_up(SCROLL_STEP);
                 Action::Render
             }
-            MouseEvent::ScrollDown { row, .. } if in_output(row) => {
+            MouseEventKind::ScrollDown if in_output(row) => {
                 self.ui.output.scroll_down(SCROLL_STEP);
                 Action::Render
             }
-            MouseEvent::Press {
-                button: MouseButton::Left, row, col,
-            } if in_output(row) || in_input(row) => {
+            MouseEventKind::Down(MouseButton::Left)
+                if in_output(row) || in_input(row) =>
+            {
                 if in_output(row) && has_sb && col >= sb_col {
                     let (_, _, offset) = self.ui.output.scroll_info();
                     self.ui.drag = Some(DragState::Scrollbar {
@@ -46,9 +50,7 @@ impl super::App {
                 }
                 Action::Continue
             }
-            MouseEvent::Drag {
-                button: MouseButton::Left, row, col,
-            } => {
+            MouseEventKind::Drag(MouseButton::Left) => {
                 match &self.ui.drag {
                     Some(DragState::Scrollbar {
                         start_row, start_offset,
@@ -79,9 +81,7 @@ impl super::App {
                     _ => Action::Continue,
                 }
             }
-            MouseEvent::Release {
-                button: MouseButton::Left, row, ..
-            } => {
+            MouseEventKind::Up(MouseButton::Left) => {
                 let was_selecting =
                     matches!(self.ui.drag, Some(DragState::Selecting));
                 self.ui.drag = None;
@@ -151,12 +151,10 @@ impl super::App {
             } else {
                 super::composite_overlay(&vis, &dropdown, full_h)
             };
-            // Temporarily remove bottom padding so overlay fills the full region
             self.renderer.set_bottom_padding("output", 0);
             self.renderer.set_lines("output", &composited);
         } else {
             self.renderer.set_bottom_padding("output", self.layout.output.padding.bottom);
-            // From viewport iterator — no intermediate Vec
             let iter = self.ui.output.visible_iter();
             self.renderer.set_lines_iter("output", iter);
         }
@@ -260,12 +258,11 @@ impl super::App {
             return;
         }
         let r = &self.layout.output;
-        let track = visible; // cells
+        let track = visible;
 
-        // Compute thumb in 1/8th cell units (subcells) for smooth positioning.
         const SUB: usize = 8;
         let track_sub = track * SUB;
-        let thumb_sub = (track_sub * visible / total).max(SUB); // min 1 cell
+        let thumb_sub = (track_sub * visible / total).max(SUB);
         let max_off = total.saturating_sub(visible);
         let scroll_sub = track_sub.saturating_sub(thumb_sub);
         let start_sub = (offset * scroll_sub).checked_div(max_off).unwrap_or(0);
@@ -277,13 +274,10 @@ impl super::App {
             let cell_end = cell_start + SUB;
 
             if cell_end <= start_sub || cell_start >= end_sub {
-                // Entirely outside thumb
                 cells.push(ScrollCell::Track);
             } else if cell_start >= start_sub && cell_end <= end_sub {
-                // Entirely inside thumb
                 cells.push(ScrollCell::Thumb);
             } else if cell_start < start_sub && cell_end > start_sub {
-                // Top edge: thumb starts partway through this cell
                 let frac = (start_sub - cell_start) as u8;
                 if frac == 0 {
                     cells.push(ScrollCell::Thumb);
@@ -291,7 +285,6 @@ impl super::App {
                     cells.push(ScrollCell::TopEdge(frac));
                 }
             } else {
-                // Bottom edge: thumb ends partway through this cell
                 let frac = (end_sub - cell_start) as u8;
                 if frac >= SUB as u8 {
                     cells.push(ScrollCell::Thumb);
