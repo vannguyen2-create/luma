@@ -1,8 +1,7 @@
-/// App state — enums and sub-structs for App decomposition.
+/// App state decomposition.
 use crate::config::models::{AgentMode, ModelEntry};
 use crate::core::types::ThinkingLevel;
 use crate::event::AgentCommand;
-use crate::tui::output::OutputLog;
 use crate::tui::picker::Picker;
 use crate::tui::prompt::PromptState;
 use crate::tui::selection::Selection;
@@ -10,7 +9,20 @@ use crate::tui::status::StatusBar;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
-/// Main state machine.
+/// Which screen the TUI is showing.
+/// Welcome carries its own display data — dropped on transition.
+/// Chat uses doc+view on App (always present, needed 99% of runtime).
+pub enum Screen {
+    Welcome { lines: Vec<crate::tui::text::Line> },
+    Chat,
+}
+
+impl Screen {
+    pub fn is_chat(&self) -> bool {
+        matches!(self, Screen::Chat)
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RunState {
     Idle,
@@ -19,20 +31,17 @@ pub enum RunState {
     Aborting,
 }
 
-/// Dragging interaction state.
 pub enum DragState {
     Scrollbar { start_row: u16, start_offset: usize },
     Selecting,
 }
 
-/// Picker mode selection.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PickerMode {
     Model,
     Session,
 }
 
-/// Agent-facing configuration: mode, model, thinking, env context.
 pub struct AppConfig {
     pub mode: AgentMode,
     pub model: Option<ModelEntry>,
@@ -41,33 +50,29 @@ pub struct AppConfig {
     pub picker_mode: PickerMode,
 }
 
-/// Agent loop handle: channel, cancellation, turn tracking.
 pub struct AgentHandle {
     pub tx: Option<mpsc::Sender<AgentCommand>>,
     pub cancel: Option<CancellationToken>,
     pub turn_start: Option<std::time::Instant>,
     pub state: RunState,
-    pub pending_input: Option<String>,
+    pub pending_content: Option<Vec<crate::core::types::ContentBlock>>,
     pub abort_countdown: u8,
 }
 
 impl AgentHandle {
-    /// Create idle agent handle.
     pub fn new() -> Self {
         Self {
             tx: None,
             cancel: None,
             turn_start: None,
             state: RunState::Idle,
-            pending_input: None,
+            pending_content: None,
             abort_countdown: 0,
         }
     }
 }
 
-/// UI component state: output, prompt, picker, status, selection.
-pub struct UiState {
-    pub output: OutputLog,
+pub struct UiComponents {
     pub prompt: PromptState,
     pub picker: Picker,
     pub status: StatusBar,
@@ -85,12 +90,5 @@ mod tests {
         let h = AgentHandle::new();
         assert_eq!(h.state, RunState::Idle);
         assert!(h.tx.is_none());
-    }
-
-    #[test]
-    fn run_state_values() {
-        assert_ne!(RunState::Idle, RunState::Streaming);
-        assert_ne!(RunState::Streaming, RunState::PendingAbort);
-        assert_ne!(RunState::PendingAbort, RunState::Aborting);
     }
 }

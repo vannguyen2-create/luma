@@ -69,7 +69,7 @@ pub struct FileAttach {
 pub enum AgentCommand {
     /// Run a user turn. Agent pushes user message, calls provider, runs tools.
     Chat {
-        text: String,
+        content: Vec<crate::core::types::ContentBlock>,
         images: Vec<ImageAttach>,
         files: Vec<FileAttach>,
         cancel: tokio_util::sync::CancellationToken,

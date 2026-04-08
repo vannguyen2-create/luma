@@ -6,6 +6,7 @@ mod turn;
 pub use summary::format_tool_summary;
 
 use crate::core::registry::Registry;
+use crate::core::types::ContentBlock;
 use crate::core::session::Session;
 use crate::core::types::{Message, Role, ThinkingLevel};
 use crate::event::{AgentCommand, Event};
@@ -52,30 +53,28 @@ async fn agent_loop(
 
     while let Some(cmd) = cmd_rx.recv().await {
         match cmd {
-            AgentCommand::Chat { text, images, files, cancel } => {
-                // Build user message: original text (with @path refs intact)
-                let mut content = vec![crate::core::types::ContentBlock::Text { text }];
-                // Append file contents as separate text blocks
+            AgentCommand::Chat { content, images, files, cancel } => {
+                let mut blocks = content;
                 for f in files {
                     let ext = std::path::Path::new(&f.path)
                         .extension()
                         .and_then(|e| e.to_str())
                         .unwrap_or("");
-                    content.push(crate::core::types::ContentBlock::Text {
+                    blocks.push(ContentBlock::Text {
                         text: format!("<file path=\"{}\">\n```{ext}\n{}\n```\n</file>", f.path, f.content),
                     });
                 }
                 for img in images {
                     let ext = img.media_type.rsplit('/').next().unwrap_or("png");
                     let id = crate::core::session::save_image(&session.id, &img.data, ext);
-                    content.push(crate::core::types::ContentBlock::Image {
+                    blocks.push(ContentBlock::Image {
                         media_type: img.media_type,
                         id,
                     });
                 }
                 session.messages.push(Message {
                     role: Role::User,
-                    content,
+                    content: blocks,
                     tool_call_id: None,
                     tool_calls: None,
                 });
@@ -103,10 +102,15 @@ async fn agent_loop(
                 match result {
                     Ok(_) => { let _ = event_tx.send(Event::AgentDone).await; }
                     Err(e) => {
-                        // Save on error — preserves progress before crash/abort.
+                        let msg = e.to_string();
+                        if msg.contains("Aborted") {
+                            session.messages.push(Message::system(
+                                "[user interrupted the previous turn]".to_owned(),
+                            ));
+                        }
                         fix_orphaned_tool_uses(&mut session.messages);
                         session.save();
-                        let _ = event_tx.send(Event::AgentError(e.to_string())).await;
+                        let _ = event_tx.send(Event::AgentError(msg)).await;
                     }
                 }
             }

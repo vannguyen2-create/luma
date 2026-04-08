@@ -77,6 +77,20 @@ impl Provider for CodexProvider {
             body["prompt_cache_key"] = serde_json::json!(key);
         }
 
+        // Reasoning: map ThinkingLevel → effort + summary for Responses API
+        let effort = match self.thinking {
+            ThinkingLevel::Off => None,
+            ThinkingLevel::Low => Some("low"),
+            ThinkingLevel::Medium => Some("medium"),
+            ThinkingLevel::High => Some("high"),
+        };
+        if let Some(effort) = effort {
+            body["reasoning"] = serde_json::json!({
+                "effort": effort,
+                "summary": "auto",
+            });
+        }
+
         let client = reqwest::Client::builder()
             .connect_timeout(std::time::Duration::from_secs(30))
             .build()?;
@@ -126,14 +140,19 @@ impl Provider for CodexProvider {
 
                 let event_type = event["type"].as_str().unwrap_or("");
 
+                crate::dbg_log!("codex event: {event_type}");
                 match event_type {
-                    "response.output_text.delta" => {
+                    "response.output_text.delta" | "response.content_part.delta" => {
                         if let Some(delta) = event["delta"].as_str() {
                             text.push_str(delta);
-                            let _ = tx.try_send(Event::Token(delta.to_owned()));
+                            if let Err(e) = tx.try_send(Event::Token(delta.to_owned())) {
+                                crate::dbg_log!("codex token send FAILED: {e}");
+                            }
                         }
                     }
-                    "response.reasoning_summary_text.delta" => {
+                    "response.reasoning_summary_text.delta"
+                    | "response.reasoning_summary.delta"
+                    | "response.reasoning_text.delta" => {
                         if let Some(delta) = event["delta"].as_str() {
                             let _ = tx.try_send(Event::Thinking(delta.to_owned()));
                         }
@@ -159,7 +178,21 @@ impl Provider for CodexProvider {
                             });
                         }
                     }
-                    "response.web_search_call.completed" => {}
+                    "response.web_search_call.completed"
+                    | "response.created"
+                    | "response.in_progress"
+                    | "response.output_item.added"
+                    | "response.content_part.added"
+                    | "response.content_part.done"
+                    | "response.output_text.done"
+                    | "response.reasoning_summary_part.added"
+                    | "response.reasoning_summary_text.done"
+                    | "response.reasoning_summary_part.done"
+                    | "response.reasoning_summary.part.added"
+                    | "response.reasoning_summary.part.done"
+                    | "response.reasoning_text.done"
+                    | "response.function_call_arguments.delta"
+                    | "response.function_call_arguments.done" => {}
                     "response.completed" => {
                         // Extract tool calls and web search results from output
                         if let Some(output) = event["response"]["output"].as_array() {
@@ -176,7 +209,9 @@ impl Provider for CodexProvider {
                                         });
                                     }
                                     "web_search_call" => {}
-                                    _ => {}
+                    _ => {
+                        crate::dbg_log!("codex unhandled event: {event_type} {}", raw.chars().take(200).collect::<String>());
+                    }
                                 }
                             }
                         }

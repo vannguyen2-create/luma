@@ -160,12 +160,6 @@ impl Provider for ClaudeProvider {
                             current_name = block["name"].as_str().unwrap_or("").to_owned();
                             current_args.clear();
                             streaming_content = false;
-                            if is_streamable_tool(&current_name) {
-                                let _ = tx_ref.try_send(Event::ToolStart {
-                                    name: current_name.clone(),
-                                    summary: String::new(),
-                                });
-                            }
                         }
                         "server_tool_use"
                             if block["name"] == "web_search" => {

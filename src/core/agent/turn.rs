@@ -115,9 +115,9 @@ async fn run_turn(
         };
 
         let tool_results = execute_tools(&tool_calls, registry, tx, cancel.clone()).await;
+        let aborted = cancel.is_cancelled();
 
-        if cancel.is_cancelled() { anyhow::bail!("Aborted"); }
-
+        // Always push tool results — even on abort, so LLM sees what happened
         for (tc_id, result) in tool_results {
             let mut truncated = result;
             if truncated.len() > MAX_RESULT_LEN {
@@ -126,6 +126,8 @@ async fn run_turn(
             }
             messages.push(Message::tool(tc_id, truncated));
         }
+
+        if aborted { anyhow::bail!("Aborted"); }
     }
     Ok(())
 }

@@ -1,4 +1,4 @@
-/// Event dispatch — central event handler and keyboard input routing.
+/// Event dispatch — routes events to document (model) or view.
 use super::state::{PickerMode, RunState};
 use super::{Action, ABORT_HINT_TICKS};
 use crate::config::models;
@@ -8,7 +8,6 @@ use crate::tui::prompt::PromptAction;
 use crossterm::event::{Event as CtEvent, KeyCode, KeyEvent, KeyModifiers};
 
 impl super::App {
-    /// Route an event to the appropriate handler.
     pub(super) fn handle(&mut self, event: Event) -> Action {
         if self.agent.state == RunState::Aborting {
             return match event {
@@ -28,10 +27,7 @@ impl super::App {
                     Action::Render
                 }
                 Event::AgentError(msg) => {
-                    if !msg.contains("Aborted") {
-                        self.ui.output.error(&msg);
-                    }
-                    self.on_agent_done();
+                    self.on_agent_error(&msg);
                     Action::Render
                 }
                 _ => Action::Continue,
@@ -48,12 +44,11 @@ impl super::App {
             }
             Event::Term(_) => Action::Continue,
             Event::Tick => {
-                let active = matches!(
-                    self.agent.state,
-                    RunState::Streaming | RunState::PendingAbort
-                );
-                self.ui.output.tick();
                 self.ui.status.tick();
+                if !self.screen.is_chat() {
+                    return Action::Continue;
+                }
+                self.view.tick();
                 if self.agent.state == RunState::PendingAbort {
                     self.agent.abort_countdown = self.agent.abort_countdown.saturating_sub(1);
                     if self.agent.abort_countdown == 0 {
@@ -61,6 +56,10 @@ impl super::App {
                     }
                     return Action::Render;
                 }
+                let active = matches!(
+                    self.agent.state,
+                    RunState::Streaming | RunState::PendingAbort
+                );
                 if active {
                     Action::Render
                 } else {
@@ -69,17 +68,17 @@ impl super::App {
             }
             Event::Token(t) => {
                 crate::dbg_log!("token: {}B", t.len());
-                self.ui.output.append_token(&t);
+                self.doc.append_token(&t);
                 Action::Continue
             }
             Event::Thinking(t) => {
                 crate::dbg_log!("thinking: {}B", t.len());
-                self.ui.output.append_thinking(&t);
+                self.doc.append_thinking(&t);
                 Action::Continue
             }
             Event::ToolInput { name, chunk } => {
                 crate::dbg_log!("tool_input {name}: {}B", chunk.len());
-                self.ui.output.tool_input(&name, &chunk);
+                self.doc.tool_input(&name, &chunk);
                 Action::Continue
             }
             Event::ToolOutput { name, chunk } => {
@@ -87,22 +86,22 @@ impl super::App {
                     "tool_output {name}: {:?}",
                     chunk.chars().take(60).collect::<String>()
                 );
-                self.ui.output.tool_output(&name, &chunk);
+                self.doc.tool_output(&name, &chunk);
                 Action::Continue
             }
             Event::ToolStart { name, summary } => {
                 crate::dbg_log!("tool_start {name} {summary}");
-                self.ui.output.tool_start(&name, &summary);
+                self.doc.tool_start(&name, &summary);
                 Action::Render
             }
             Event::ToolEnd { name, summary } => {
                 crate::dbg_log!("tool_end {name} {summary}");
-                self.ui.output.tool_end(&name, &summary);
+                self.doc.tool_end(&name, &summary);
                 Action::Render
             }
             Event::WebSearchStart { query } => {
                 crate::dbg_log!("web_search_start: {query}");
-                self.ui.output.tool_start("web_search", &query);
+                self.doc.tool_start("web_search", &query);
                 Action::Render
             }
             Event::WebSearchDone { query, results } => {
@@ -112,7 +111,7 @@ impl super::App {
                     format!("{} results", results.len())
                 };
                 if !query.is_empty() {
-                    self.ui.output.tool_start("web_search", &query);
+                    self.doc.tool_start("web_search", &query);
                 }
                 for hit in &results {
                     let mut entry = format!("{}\n{}\n", hit.title, hit.url);
@@ -120,17 +119,17 @@ impl super::App {
                         entry.push_str(&format!("{}\n", hit.snippet));
                     }
                     entry.push('\n');
-                    self.ui.output.tool_output("web_search", &entry);
+                    self.doc.tool_output("web_search", &entry);
                 }
-                self.ui.output.tool_end("web_search", &end);
+                self.doc.tool_end("web_search", &end);
                 Action::Render
             }
             Event::SkillStart(name) => {
-                self.ui.output.skill_start(&name);
+                self.doc.skill_start(&name);
                 Action::Render
             }
             Event::SkillEnd(summary) => {
-                self.ui.output.skill_end(&summary);
+                self.doc.skill_end(&summary);
                 Action::Render
             }
             Event::Usage(usage) => {
@@ -159,16 +158,12 @@ impl super::App {
             }
             Event::AgentError(msg) => {
                 crate::dbg_log!("agent error: {msg}");
-                if !msg.contains("Aborted") {
-                    self.ui.output.error(&msg);
-                }
-                self.on_agent_done();
+                self.on_agent_error(&msg);
                 Action::Render
             }
         }
     }
 
-    /// Handle keyboard input — escape, picker, tab, prompt keys.
     pub(super) fn on_key(&mut self, key: KeyEvent) -> Action {
         crate::dbg_log!("key {:?} state={:?}", key, self.agent.state);
 
@@ -176,11 +171,11 @@ impl super::App {
         let is_ctrl_c =
             key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL);
 
-        // Escape or Ctrl+C during streaming → abort agent
-        if is_esc || is_ctrl_c {
+        // Esc: interrupt streaming only
+        if is_esc {
             if self.agent.state == RunState::PendingAbort {
                 self.agent.state = RunState::Aborting;
-                self.ui.output.abort();
+                self.doc.abort();
                 if let Some(c) = &self.agent.cancel {
                     c.cancel();
                 }
@@ -191,9 +186,14 @@ impl super::App {
                 self.agent.abort_countdown = ABORT_HINT_TICKS;
                 return Action::Render;
             }
-            if is_esc && self.agent.state != RunState::Idle {
-                return Action::Continue;
+        }
+        // Ctrl+C: clear buffer or quit
+        if is_ctrl_c {
+            if self.ui.prompt.buf.is_empty() {
+                return Action::Quit;
             }
+            self.ui.prompt.buf.clear();
+            return Action::Render;
         }
 
         if self.ui.picker.is_active {
@@ -222,40 +222,48 @@ impl super::App {
         match self.ui.prompt.handle_key(&key) {
             PromptAction::None => Action::Continue,
             PromptAction::Redraw => Action::Render,
-            PromptAction::Submit(text) => self.on_submit(text),
-            PromptAction::Interrupt => Action::Quit,
+            PromptAction::Submit(content) => self.on_submit(content),
             PromptAction::ToggleThinking => {
                 self.cycle_thinking();
-                Action::Render
-            }
-            PromptAction::PasteImage => {
-                self.paste_clipboard_image();
-                Action::Render
-            }
-            PromptAction::PasteImagePath(path) => {
-                self.paste_image_file(&path);
                 Action::Render
             }
         }
     }
 
-    /// Handle bracketed paste from terminal.
+    /// Handle bracketed paste — detect image vs text, route accordingly.
     pub(super) fn on_paste(&mut self, text: String) -> Action {
-        crate::dbg_log!("paste: {}B {:?}", text.len(), text);
-        match self.ui.prompt.handle_paste(text) {
-            PromptAction::None => Action::Continue,
-            PromptAction::Redraw => Action::Render,
-            PromptAction::PasteImage => {
-                self.paste_clipboard_image();
-                Action::Render
-            }
-            PromptAction::PasteImagePath(path) => {
-                self.paste_image_file(&path);
-                Action::Render
-            }
-            PromptAction::Submit(_) | PromptAction::Interrupt | PromptAction::ToggleThinking => {
-                Action::Render
-            }
+        crate::dbg_log!("paste: {}B", text.len());
+        if text.is_empty() {
+            self.paste_clipboard_image();
+        } else if let Some(path) = extract_image_path(&text) {
+            self.paste_image_file(&path);
+        } else {
+            self.ui.prompt.handle_paste(text);
         }
+        Action::Render
+    }
+}
+
+const IMAGE_EXTENSIONS: &[&str] = &["png", "jpg", "jpeg", "gif", "webp", "bmp", "tiff"];
+
+/// Extract a valid image file path from pasted text (handles quotes, file:// URLs).
+fn extract_image_path(text: &str) -> Option<String> {
+    let trimmed = text.trim();
+    if trimmed.contains('\n') {
+        return None;
+    }
+    let cleaned = trimmed
+        .trim_matches('\'')
+        .trim_matches('"')
+        .trim_start_matches("file://");
+    let path = std::path::Path::new(cleaned);
+    let is_image = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|ext| IMAGE_EXTENSIONS.contains(&ext.to_lowercase().as_str()));
+    if is_image && path.is_file() {
+        Some(cleaned.to_owned())
+    } else {
+        None
     }
 }

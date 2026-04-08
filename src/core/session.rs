@@ -64,9 +64,7 @@ impl Session {
             .iter()
             .find(|m| m.role == crate::core::types::Role::User)
         {
-            let text = msg.text();
-            let first_line = text.lines().next().unwrap_or("");
-            self.title = first_line.chars().take(60).collect();
+            self.title = preview_text_n(msg.display_text(), 60);
         }
     }
 
@@ -108,26 +106,21 @@ pub fn list_sessions() -> Vec<SessionMeta> {
         .flatten()
         .filter(|e| e.path().extension().map(|x| x == "json").unwrap_or(false))
         .filter_map(|e| {
-            let content = fs::read_to_string(e.path()).ok()?;
-            let val: serde_json::Value = serde_json::from_str(&content).ok()?;
-            let messages = val["messages"].as_array();
-            let message_count = messages.map(|a| a.len()).unwrap_or(0);
-            let last_preview = messages
-                .and_then(|msgs| {
-                    msgs.iter()
-                        .rev()
-                        .find(|m| m["role"].as_str() == Some("user"))
-                })
-                .and_then(|m| m["content"].as_str())
-                .and_then(|c| c.lines().next())
-                .map(|l| l.chars().take(50).collect::<String>())
+            let raw = fs::read_to_string(e.path()).ok()?;
+            let session: Session = serde_json::from_str(&raw).ok()?;
+            let last_preview = session
+                .messages
+                .iter()
+                .rev()
+                .find(|m| m.role == crate::core::types::Role::User)
+                .map(|m| preview_text_n(m.display_text(), 50))
                 .unwrap_or_default();
             Some(SessionMeta {
-                id: val["id"].as_str()?.to_owned(),
-                title: val["title"].as_str().unwrap_or("").to_owned(),
-                created_at: val["created_at"].as_str().unwrap_or("").to_owned(),
-                updated_at: val["updated_at"].as_str().unwrap_or("").to_owned(),
-                message_count,
+                id: session.id,
+                title: session.title,
+                created_at: session.created_at,
+                updated_at: session.updated_at,
+                message_count: session.messages.len(),
                 last_preview,
             })
         })
@@ -135,6 +128,14 @@ pub fn list_sessions() -> Vec<SessionMeta> {
 
     sessions.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
     sessions
+}
+
+/// First meaningful line of user text, truncated to `max` chars.
+fn preview_text_n(text: &str, max: usize) -> String {
+    text.lines()
+        .find(|l| !l.starts_with('<') && !l.trim().is_empty())
+        .map(|l| l.chars().take(max).collect())
+        .unwrap_or_default()
 }
 
 fn sessions_dir() -> PathBuf {
@@ -232,8 +233,7 @@ mod tests {
     }
 
     #[test]
-    fn deserialize_content_block_session() {
-        // Session with Vec<ContentBlock> content (new format)
+    fn deserialize_session() {
         let json = r#"{
             "id": "ses_test",
             "title": "test",

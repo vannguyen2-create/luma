@@ -1,64 +1,28 @@
-/// Prompt rendering — input lines, dropdown, inline indicators.
+/// Prompt rendering — input line with inline segment chips, dropdown.
+use super::buffer::Seg;
 use super::completion::{dropdown_line, highlight_at_refs};
 use crate::tui::text::{Line, Span};
 use crate::tui::theme::palette;
 use smallvec::smallvec;
 
 impl super::PromptState {
-    /// Render the prompt lines.
+    /// Render the prompt input line.
     pub fn lines(&self) -> Vec<Line> {
-        let mut spans = smallvec![];
-
-        // Inline image indicators: [Image 1] [Image 2]
-        for (i, _img) in self.images.iter().enumerate() {
-            spans.push(Span::with_bg(
-                format!(" Image {} ", i + 1),
-                palette::BG,
-                palette::FILE_REF,
-            ));
-            spans.push(Span::new(" ".to_owned(), palette::FG));
-        }
-
-        // Paste preview mode
-        if let Some(pasted) = &self.paste {
-            let n = pasted.lines().count();
-            spans.push(Span::with_bg(
-                format!(" Pasted ~{n} lines "),
-                palette::BG,
-                palette::WARN,
-            ));
-            return vec![
-                Line::new(spans),
-                Line::new(smallvec![
-                    Span::new("enter", palette::ACCENT),
-                    Span::new(" send  ", palette::DIM),
-                    Span::new("esc", palette::ACCENT),
-                    Span::new(" cancel", palette::DIM),
-                ]),
-            ];
-        }
-
-        // Multiline buffer
-        let ghost = self.ghost();
-        let line_count = self.buffer.lines().count();
+        let line_count = self.buf.line_count();
         if line_count > 1 {
-            let last_line = self.buffer.lines().last().unwrap_or("");
-            spans.push(Span::new(last_line.to_owned(), palette::FG));
-            return vec![
-                Line::new(spans),
-                Line::new(smallvec![
-                    Span::new(format!("{line_count} lines "), palette::DIM),
-                    Span::new("enter", palette::ACCENT),
-                    Span::new(" send  ", palette::DIM),
-                    Span::new("esc", palette::ACCENT),
-                    Span::new(" clear", palette::DIM),
-                ]),
+            let mut spans = smallvec![
+                Span::with_bg(format!(" ~{line_count} lines "), palette::BG, palette::DIM),
+                Span::new(" ".to_owned(), palette::FG),
             ];
+            spans.extend(render_segs_inline(
+                &self.buf.segs,
+                Some(&self.buf.last_line()),
+            ));
+            return vec![Line::new(spans)];
         }
 
-        // Normal single-line with @path highlighting
-        let text_spans = highlight_at_refs(&self.buffer);
-        spans.extend(text_spans);
+        let mut spans = render_segs_inline(&self.buf.segs, None);
+        let ghost = self.ghost();
         if !ghost.is_empty() {
             spans.push(Span::new(ghost, palette::MUTED));
         }
@@ -111,4 +75,51 @@ impl super::PromptState {
             })
             .collect()
     }
+}
+
+/// Render segments as inline spans. If `last_line_only` is set, only that text.
+fn render_segs_inline(segs: &[Seg], last_line_only: Option<&str>) -> smallvec::SmallVec<[Span; 4]> {
+    let mut spans = smallvec![];
+    let mut img_n = 0;
+
+    for seg in segs {
+        match seg {
+            Seg::Text(t) => {
+                let text = if let Some(ll) = last_line_only {
+                    ll
+                } else {
+                    t.as_str()
+                };
+                if !text.is_empty() {
+                    spans.extend(highlight_at_refs(text));
+                }
+                if last_line_only.is_some() {
+                    // Only render last line text, skip rest
+                    continue;
+                }
+            }
+            Seg::Image { .. } => {
+                img_n += 1;
+                spans.push(Span::with_bg(
+                    format!(" Image {img_n} "),
+                    palette::BG,
+                    palette::FILE_REF,
+                ));
+                spans.push(Span::new(" ".to_owned(), palette::FG));
+            }
+            Seg::Paste(text) => {
+                let n = text.lines().count();
+                spans.push(Span::with_bg(
+                    format!(" Pasted ~{n} lines "),
+                    palette::BG,
+                    palette::WARN,
+                ));
+                spans.push(Span::new(" ".to_owned(), palette::FG));
+            }
+        }
+    }
+    if spans.is_empty() {
+        spans.push(Span::new(String::new(), palette::FG));
+    }
+    spans
 }

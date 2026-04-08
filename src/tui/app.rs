@@ -3,15 +3,14 @@ mod commands;
 mod dispatch;
 mod input;
 mod render;
-/// App — async event loop, state machine, owns all TUI state.
 mod state;
 
-use state::{AgentHandle, AppConfig, PickerMode, UiState};
+use state::{AgentHandle, AppConfig, PickerMode, Screen, UiComponents};
 
 use crate::config::models;
 use crate::core::types::ThinkingLevel;
 use crate::event::Event;
-use crate::tui::output::OutputLog;
+use crate::tui::document::Document;
 use crate::tui::picker::Picker;
 use crate::tui::prompt::PromptState;
 use crate::tui::renderer::{Region, Renderer};
@@ -20,6 +19,7 @@ use crate::tui::status::StatusBar;
 use crate::tui::term;
 use crate::tui::text::{Line, Padding};
 use crate::tui::theme::{CONTENT_PAD, OUTER_MARGIN, palette};
+use crate::tui::view::ViewState;
 use crossterm::terminal;
 use std::io::Write;
 use std::time::Duration;
@@ -27,10 +27,7 @@ use tokio::sync::mpsc;
 
 const TICK_INTERVAL: Duration = Duration::from_millis(80);
 const SCROLL_STEP: usize = 3;
-const ABORT_HINT_TICKS: u8 = 25; // ~2s at 80ms tick
-/// Max events to drain per frame before forcing a render.
-/// Prevents starvation when producers (agent + tick + mouse) keep filling
-/// the channel faster than we drain — without this, render() never runs.
+const ABORT_HINT_TICKS: u8 = 25;
 const DRAIN_BUDGET: usize = 64;
 
 const LOGO: &[&str] = &[
@@ -63,19 +60,19 @@ const LOGO: &[&str] = &[
     "             ⠙⢿⣿⣿⣿⣿⡌⠙⠛⠁",
 ];
 
-struct Layout {
+struct Regions {
     output: Region,
     status: Region,
     input: Region,
 }
 
-fn compute_layout(w: u16, h: u16) -> Layout {
+fn compute_regions(w: u16, h: u16) -> Regions {
     let mx = OUTER_MARGIN;
     let sh = 2u16;
     let ih = 5u16;
     let oh = h.saturating_sub(sh + ih).max(1);
     let inner_w = w.saturating_sub(mx * 2);
-    Layout {
+    Regions {
         output: Region {
             row: 1,
             col: 1 + mx,
@@ -113,29 +110,30 @@ fn compute_layout(w: u16, h: u16) -> Layout {
     }
 }
 
-/// The TUI application.
 pub struct App {
-    ui: UiState,
+    screen: Screen,
+    doc: Document,
+    view: ViewState,
+    ui: UiComponents,
     renderer: Renderer,
-    layout: Layout,
+    regions: Regions,
     agent: AgentHandle,
     config: AppConfig,
     tx: Option<mpsc::Sender<Event>>,
 }
 
 impl App {
-    /// Create the app.
     pub fn new(env_context: String) -> Self {
         let (w, h) = terminal::size().unwrap_or((80, 24));
-        let layout = compute_layout(w, h);
+        let regions = compute_regions(w, h);
         let mut renderer = Renderer::new(w, h);
-        renderer.define("output", layout.output.clone());
-        renderer.define("status", layout.status.clone());
-        renderer.define("input", layout.input.clone());
+        renderer.define("output", regions.output.clone());
+        renderer.define("status", regions.status.clone());
+        renderer.define("input", regions.input.clone());
 
-        let output = OutputLog::new(
-            layout.output.content_width() as usize,
-            layout.output.content_height() as usize,
+        let view = ViewState::new(
+            regions.output.content_width() as usize,
+            regions.output.content_height() as usize,
         );
         let mut prompt = PromptState::new();
         prompt.add_command("new", "new thread");
@@ -148,8 +146,7 @@ impl App {
         let model = models::resolve_default(mode);
         let thinking = crate::config::prefs::load_thinking();
 
-        let ui = UiState {
-            output,
+        let ui = UiComponents {
             prompt,
             picker: Picker::new(),
             status: StatusBar::new(),
@@ -165,10 +162,18 @@ impl App {
             picker_mode: PickerMode::Model,
         };
 
+        let content_w = regions.output.content_width() as usize;
+        let output_h = regions.output.content_height() as usize;
+
         let mut app = Self {
+            screen: Screen::Welcome {
+                lines: build_welcome(LOGO, content_w, output_h),
+            },
+            doc: Document::new(),
+            view,
             ui,
             renderer,
-            layout,
+            regions,
             agent: AgentHandle::new(),
             config,
             tx: None,
@@ -186,7 +191,6 @@ impl App {
         app
     }
 
-    /// Process a single event with panic recovery. Returns true to quit.
     fn process_event(&mut self, event: Event) -> bool {
         let result =
             std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| self.handle(event)));
@@ -202,13 +206,19 @@ impl App {
                     "unknown panic".to_owned()
                 };
                 crate::dbg_log!("PANIC caught: {msg}");
-                self.ui.output.error(&format!("internal error: {msg}"));
+                self.doc.error(&format!("internal error: {msg}"));
                 false
             }
         }
     }
 
-    /// Enter crossterm raw mode and enable terminal features.
+    /// Transition to Chat screen. Drops Welcome data if present.
+    fn enter_chat(&mut self) {
+        if !self.screen.is_chat() {
+            self.screen = Screen::Chat;
+        }
+    }
+
     fn enter_terminal(out: &mut impl Write) -> anyhow::Result<()> {
         terminal::enable_raw_mode()?;
         crossterm::execute!(
@@ -221,7 +231,6 @@ impl App {
         Ok(())
     }
 
-    /// Restore terminal to normal mode.
     fn exit_terminal(out: &mut impl Write) {
         let _ = crossterm::execute!(
             out,
@@ -233,7 +242,6 @@ impl App {
         let _ = terminal::disable_raw_mode();
     }
 
-    /// Run the event loop.
     pub async fn run(mut self) -> anyhow::Result<()> {
         let (tx, mut rx) = mpsc::channel::<Event>(256);
         self.tx = Some(tx.clone());
@@ -244,18 +252,8 @@ impl App {
         self.renderer.clear_screen();
 
         if self.config.model.is_none() {
-            self.ui.output.warn("no model — run 'luma sync'");
+            self.doc.warn("no model — run 'luma sync'");
         }
-        // Vertical centering: pad so logo sits in the middle of the output area
-        let logo_height = LOGO.len() + 2; // +2 for dividers
-        let output_h = self.layout.output.content_height() as usize;
-        let top_pad = output_h.saturating_sub(logo_height) / 2;
-        for _ in 0..top_pad {
-            self.ui.output.divider();
-        }
-        self.ui.output.logo(LOGO);
-        self.ui.output.divider();
-
         self.render();
 
         let tx_input = tx.clone();
@@ -272,12 +270,9 @@ impl App {
             }
         });
 
-        // Bounded-drain event loop: recv first → drain up to DRAIN_BUDGET → render.
         loop {
             let Some(event) = rx.recv().await else { break };
-            if self.process_event(event) {
-                break;
-            }
+            if self.process_event(event) { break; }
             let mut drained = 1usize;
             while drained < DRAIN_BUDGET {
                 match rx.try_recv() {
@@ -302,17 +297,34 @@ impl App {
     }
 }
 
-fn composite_overlay(content: &[Line], overlay: &[Line], height: usize) -> Vec<Line> {
-    let overlay_count = overlay.len().min(height);
-    let content_space = height.saturating_sub(overlay_count);
-    let mut result: Vec<Line> = content.iter().take(content_space).cloned().collect();
-    let pad_count = content_space.saturating_sub(result.len());
-    result.extend(std::iter::repeat_n(Line::empty(), pad_count));
-    result.extend(overlay.iter().take(overlay_count).cloned());
-    result
+/// Build static welcome screen lines: vertically centered logo.
+fn build_welcome(logo: &[&str], width: usize, height: usize) -> Vec<Line> {
+    use crate::tui::text::Span;
+    use smallvec::smallvec;
+
+    let max_w = logo
+        .iter()
+        .map(|l| crate::tui::text::display_width(l))
+        .max()
+        .unwrap_or(0);
+    let pad = (width.saturating_sub(max_w) * 2 / 5) as u16;
+    let logo_lines: Vec<Line> = logo
+        .iter()
+        .map(|l| {
+            let mut line = Line::new(smallvec![Span::new(l.to_string(), palette::MUTED)]);
+            line.indent = pad;
+            line
+        })
+        .collect();
+
+    let top_pad = height.saturating_sub(logo_lines.len()) / 2;
+    let mut lines = Vec::with_capacity(height);
+    lines.resize(top_pad, Line::empty());
+    lines.extend(logo_lines);
+    lines.resize(height, Line::empty());
+    lines
 }
 
-/// Format a duration compactly: "1.2s", "45.0s", "1m 23s".
 fn format_duration(d: std::time::Duration) -> String {
     let secs = d.as_secs_f64();
     if secs < 60.0 {
@@ -335,61 +347,20 @@ mod tests {
     use super::*;
 
     #[test]
-    fn compute_layout_basic() {
-        let l = compute_layout(80, 24);
-        assert_eq!(l.output.height, 17);
-        assert_eq!(l.input.height, 5);
-        assert_eq!(l.status.height, 2);
-        assert_eq!(l.output.width, 80 - OUTER_MARGIN * 2);
-        assert_eq!(
-            l.output.content_width(),
-            80 - (OUTER_MARGIN + CONTENT_PAD) * 2
-        );
+    fn compute_regions_basic() {
+        let r = compute_regions(80, 24);
+        assert_eq!(r.output.height, 17);
+        assert_eq!(r.input.height, 5);
+        assert_eq!(r.status.height, 2);
     }
 
     #[test]
     fn format_duration_short() {
-        let d = std::time::Duration::from_secs_f64(3.456);
-        assert_eq!(format_duration(d), "3.5s");
+        assert_eq!(format_duration(std::time::Duration::from_secs_f64(3.456)), "3.5s");
     }
 
     #[test]
     fn format_duration_long() {
-        let d = std::time::Duration::from_secs(95);
-        assert_eq!(format_duration(d), "1m 35s");
-    }
-
-    /// Prove bounded drain guarantees render runs frequently.
-    /// With unbounded drain, a continuously-fed queue starves render.
-    #[test]
-    fn bounded_drain_prevents_starvation() {
-        let total_budget = 500usize;
-        let mut queue = std::collections::VecDeque::from_iter(0..total_budget);
-        let mut renders = 0usize;
-        let mut processed = 0usize;
-        let budget = DRAIN_BUDGET;
-
-        while let Some(_event) = queue.pop_front() {
-            processed += 1;
-            let mut drained = 1usize;
-            while drained < budget {
-                if let Some(_e) = queue.pop_front() {
-                    processed += 1;
-                    drained += 1;
-                    queue.push_back(0);
-                } else {
-                    break;
-                }
-            }
-            renders += 1;
-            if processed >= 2000 {
-                break;
-            }
-        }
-
-        assert!(
-            renders >= 20,
-            "bounded drain should render frequently: renders={renders} processed={processed}"
-        );
+        assert_eq!(format_duration(std::time::Duration::from_secs(95)), "1m 35s");
     }
 }

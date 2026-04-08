@@ -7,24 +7,25 @@ use crate::event::AgentCommand;
 use crate::tui::theme::palette;
 
 impl super::App {
-    /// Dispatch a slash command.
     pub(super) fn handle_command(&mut self, cmd: &str) -> Action {
         match cmd {
             "new" => {
                 if let Some(tx) = &self.agent.tx {
                     let _ = tx.try_send(AgentCommand::Reset);
                 }
-                self.ui.output.clear();
-                self.ui.output.divider();
-                self.ui.output.info("new thread started");
-                self.ui.output.divider();
+                self.enter_chat();
+                self.doc.clear();
+                self.view.clear();
+                self.doc.divider();
+                self.doc.info("new thread started");
+                self.doc.divider();
                 self.ui.status.reset_cache();
                 Action::Render
             }
             "model" => {
                 let all = models::all_models();
                 if all.is_empty() {
-                    self.ui.output.error("no models — run 'luma sync'");
+                    self.doc.error("no models — run 'luma sync'");
                 } else {
                     self.config.picker_mode = PickerMode::Model;
                     let current = self
@@ -42,7 +43,7 @@ impl super::App {
             "sessions" => {
                 let sessions = crate::core::session::list_sessions();
                 if sessions.is_empty() {
-                    self.ui.output.info("no sessions yet");
+                    self.doc.info("no sessions yet");
                 } else {
                     self.config.picker_mode = PickerMode::Session;
                     let items: Vec<String> = sessions
@@ -69,19 +70,18 @@ impl super::App {
                 if let Some(id) = crate::config::prefs::load_last_session() {
                     self.resume_session(&id);
                 } else {
-                    self.ui.output.info("no previous session");
+                    self.doc.info("no previous session");
                 }
                 Action::Render
             }
             "exit" => Action::Quit,
             _ => {
-                self.ui.output.warn(&format!("unknown command: /{cmd}"));
+                self.doc.warn(&format!("unknown command: /{cmd}"));
                 Action::Render
             }
         }
     }
 
-    /// Select a model from the picker.
     pub(super) fn select_model(&mut self, model_id: &str) {
         let all = models::all_models();
         if let Some(m) = all.iter().find(|m| m.id == model_id) {
@@ -97,11 +97,10 @@ impl super::App {
         }
     }
 
-    /// Tab cycle all 3 modes.
     pub(super) fn quick_cycle_mode(&mut self) {
         self.apply_mode(self.config.mode.next());
     }
-    /// Apply a mode switch. Every mode = separate session.
+
     fn apply_mode(&mut self, new_mode: AgentMode) {
         if new_mode == self.config.mode {
             return;
@@ -112,16 +111,17 @@ impl super::App {
         if let Some(tx) = self.agent.tx.take() {
             let _ = tx.try_send(AgentCommand::Shutdown);
         }
-        self.ui.output.clear();
-        self.ui.output.divider_with_label(self.config.mode.as_str());
+        self.enter_chat();
+        self.doc.clear();
+        self.view.clear();
+        self.doc.divider_with_label(self.config.mode.as_str());
         self.update_status();
     }
 
-    /// Resume a saved session from the picker.
     pub(super) fn resume_session(&mut self, picker_id: &str) {
         let session_id = picker_id.split(" — ").next().unwrap_or(picker_id).trim();
         let Some(session) = crate::core::session::Session::load(session_id) else {
-            self.ui.output.error("session not found");
+            self.doc.error("session not found");
             return;
         };
 
@@ -131,25 +131,25 @@ impl super::App {
                 session: session.clone(),
             });
         }
-        self.ui.output.clear();
-        self.ui.output.divider();
+        self.enter_chat();
+        self.doc.clear();
+        self.view.clear();
+        self.doc.divider();
         let title = if session.title.is_empty() {
             "(untitled)"
         } else {
             &session.title
         };
-        self.ui.output.info(&format!("resumed: {title}"));
-        self.ui.output.divider();
+        self.doc.info(&format!("resumed: {title}"));
+        self.doc.divider();
         self.render_history(&session.messages, &session.turn_durations);
 
-        // Restore usage to status bar
         let u = &session.usage;
         self.ui.status.reset_cache();
         self.ui.status.add_cache(u.cache_read, u.cache_write);
         let total = if u.input_tokens + u.output_tokens + u.cache_read + u.cache_write > 0 {
             u.input_tokens + u.cache_read + u.cache_write + u.output_tokens
         } else {
-            // Legacy sessions without usage data — rough estimate
             session
                 .messages
                 .iter()
@@ -166,7 +166,7 @@ impl super::App {
         let pct = ((total as f64 / ctx as f64) * 100.0).min(100.0) as u8;
         self.ui.status.set_context(total, pct);
     }
-    /// Replay saved messages into OutputLog for visual history.
+
     pub(super) fn render_history(
         &mut self,
         messages: &[crate::core::types::Message],
@@ -174,8 +174,6 @@ impl super::App {
     ) {
         use crate::core::types::Role;
 
-        // Find the start of the last few turns to avoid rendering
-        // entire history (which can freeze the UI for large sessions).
         const MAX_RENDER_TURNS: usize = 6;
         let mut turn_starts = Vec::new();
         for (i, msg) in messages.iter().enumerate() {
@@ -191,10 +189,10 @@ impl super::App {
         };
 
         if skip_turns > 0 {
-            self.ui.output.info(&format!(
+            self.doc.info(&format!(
                 "({skip_turns} earlier turns hidden, showing last {MAX_RENDER_TURNS})"
             ));
-            self.ui.output.divider();
+            self.doc.divider();
         }
 
         let mut turn_idx: usize = 0;
@@ -211,14 +209,14 @@ impl super::App {
                         self.turn_divider(turn_durations, turn_idx.wrapping_sub(2));
                     }
                     seen_user = true;
-                    self.ui.output.user_message(msg.display_text());
+                    self.doc.user_message(&msg.content);
                 }
                 Role::Assistant => {
                     if i < render_from {
                         continue;
                     }
                     if msg.has_text() {
-                        self.ui.output.assistant_message(&msg.text());
+                        self.doc.assistant_message(&msg.text());
                     }
                     if let Some(tcs) = &msg.tool_calls {
                         for tc in tcs {
@@ -227,7 +225,7 @@ impl super::App {
                                     .unwrap_or(serde_json::Value::Null);
                             let summary =
                                 crate::core::agent::format_tool_summary(&tc.function.name, &args);
-                            self.ui.output.tool_history(&tc.function.name, &summary);
+                            self.doc.tool_history(&tc.function.name, &summary);
                         }
                     }
                 }
@@ -238,19 +236,17 @@ impl super::App {
             self.turn_divider(turn_durations, turn_idx.wrapping_sub(1));
         }
     }
+
     fn turn_divider(&mut self, durations: &[f64], idx: usize) {
-        self.ui.output.newline();
+        self.doc.newline();
         if let Some(&dur) = durations.get(idx) {
             let d = std::time::Duration::from_secs_f64(dur);
-            self.ui
-                .output
-                .divider_with_label(&super::format_duration(d));
+            self.doc.divider_with_label(&super::format_duration(d));
         } else {
-            self.ui.output.divider();
+            self.doc.divider();
         }
     }
 
-    /// Cycle thinking level and notify agent.
     pub(super) fn cycle_thinking(&mut self) {
         self.config.thinking = self.config.thinking.next();
         if let Some(tx) = &self.agent.tx {
@@ -267,7 +263,6 @@ impl super::App {
         self.ui.status.set_thinking_level(label);
     }
 
-    /// Sync status bar with current mode/model/provider.
     pub(super) fn update_status(&mut self) {
         let mode_color = match self.config.mode {
             AgentMode::Rush => palette::MODE_RUSH,

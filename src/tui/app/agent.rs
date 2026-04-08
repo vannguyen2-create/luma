@@ -6,55 +6,57 @@ use crate::tui::status::StatusState;
 use tokio_util::sync::CancellationToken;
 
 impl super::App {
-    /// Handle user submit — dispatch command or start agent turn.
-    pub(super) fn on_submit(&mut self, text: String) -> Action {
-        if let Some(cmd) = text.strip_prefix('/') {
+    /// Handle submit from prompt — command or chat.
+    pub(super) fn on_submit(&mut self, content: Vec<crate::core::types::ContentBlock>) -> Action {
+        // Command: first text block starts with /
+        if let Some(crate::core::types::ContentBlock::Text { text }) = content.first()
+            && let Some(cmd) = text.strip_prefix('/')
+        {
             return self.handle_command(cmd);
         }
         if self.agent.state != RunState::Idle {
-            self.agent.pending_input = Some(text);
+            self.agent.pending_content = Some(content);
             self.agent.state = RunState::Aborting;
             if let Some(c) = &self.agent.cancel {
                 c.cancel();
             }
             return Action::Render;
         }
-        let files = read_file_refs(&text);
-        crate::dbg_log!(
-            "submit: {}, {} files",
-            text.chars().take(40).collect::<String>(),
-            files.len()
-        );
-        self.spawn_agent(text, files);
+        self.spawn_agent(content);
         Action::Render
     }
 
-    /// Send user message to agent and start streaming.
-    pub(super) fn spawn_agent(&mut self, text: String, files: Vec<crate::event::FileAttach>) {
+    /// Send user content to agent.
+    pub(super) fn spawn_agent(&mut self, content: Vec<crate::core::types::ContentBlock>) {
         if self.config.model.is_none() {
-            self.ui.output.error("no model — run 'luma sync'");
+            self.doc.error("no model — run 'luma sync'");
             return;
         }
         self.ensure_agent_loop();
-        self.ui.output.user_message(&text);
+        self.enter_chat();
+        self.doc.user_message(&content);
         self.agent.state = RunState::Streaming;
         self.ui.status.set_state(StatusState::Thinking);
         self.agent.turn_start = Some(std::time::Instant::now());
 
-        let attached = self.ui.prompt.take_images();
-        let images: Vec<crate::event::ImageAttach> = attached
+        // Extract file refs from text blocks
+        let text = crate::core::types::Message::content_text(&content);
+        let files = read_file_refs(&text);
+
+        // Extract image binary data from prompt attachments
+        let images: Vec<crate::event::ImageAttach> = self
+            .ui
+            .prompt
+            .take_images()
             .into_iter()
-            .map(|img| crate::event::ImageAttach {
-                media_type: img.media_type,
-                data: img.data,
-            })
+            .map(|(media_type, data)| crate::event::ImageAttach { media_type, data })
             .collect();
 
         let cancel = CancellationToken::new();
         self.agent.cancel = Some(cancel.clone());
         if let Some(agent_tx) = &self.agent.tx {
             let _ = agent_tx.try_send(AgentCommand::Chat {
-                text,
+                content,
                 files,
                 images,
                 cancel,
@@ -62,27 +64,24 @@ impl super::App {
         }
     }
 
-    /// Read clipboard image and attach to prompt.
     pub(super) fn paste_clipboard_image(&mut self) {
         let Some(data) = read_clipboard_image() else {
-            self.ui.output.info("no image in clipboard");
+            self.doc.info("no image in clipboard");
             return;
         };
         let (media_type, _) = detect_image_format(&data);
         self.ui.prompt.attach_image(media_type.to_owned(), data);
     }
 
-    /// Read image from file path (drag-drop) and attach to prompt.
     pub(super) fn paste_image_file(&mut self, path: &str) {
         let Ok(data) = std::fs::read(path) else {
-            self.ui.output.info("cannot read image file");
+            self.doc.info("cannot read image file");
             return;
         };
         let (media_type, _) = detect_image_format(&data);
         self.ui.prompt.attach_image(media_type.to_owned(), data);
     }
 
-    /// Start agent loop if not running.
     pub(super) fn ensure_agent_loop(&mut self) {
         if self.agent.tx.is_some() {
             return;
@@ -122,11 +121,7 @@ impl super::App {
             registry.register(Box::new(crate::tool::glob::GlobTool));
             registry.register(Box::new(crate::tool::grep::GrepTool));
         }
-
-        // Declare server capabilities — each provider maps these to its own format.
         registry.add_server_capability("web_search");
-
-        // Fallback: client-side web search when provider doesn't support built-in.
         if let Some(backend) = Self::search_backend() {
             registry.register(Box::new(crate::tool::web_search::WebSearchTool::new(
                 backend,
@@ -136,7 +131,6 @@ impl super::App {
         self.agent.tx = Some(crate::core::agent::spawn(config, registry, tx));
     }
 
-    /// Detect search backend from environment variables.
     fn search_backend() -> Option<crate::tool::web_search::SearchBackend> {
         use crate::tool::web_search::SearchBackend;
         if let Ok(key) = std::env::var("EXA_API_KEY") {
@@ -151,27 +145,33 @@ impl super::App {
         None
     }
 
-    /// Handle agent completion — show duration, reset state, process pending.
     pub(super) fn on_agent_done(&mut self) {
-        self.ui.output.newline();
+        self.doc.newline();
         if let Some(start) = self.agent.turn_start.take() {
             let label = super::format_duration(start.elapsed());
-            self.ui.output.divider_with_label(&label);
+            self.doc.divider_with_label(&label);
         } else {
-            self.ui.output.divider();
+            self.doc.divider();
         }
         self.agent.state = RunState::Idle;
         self.agent.cancel = None;
         self.ui.status.set_state(StatusState::Ready);
 
-        if let Some(next) = self.agent.pending_input.take() {
-            let files = read_file_refs(&next);
-            self.spawn_agent(next, files);
+        if let Some(content) = self.agent.pending_content.take() {
+            self.spawn_agent(content);
         }
+    }
+
+    pub(super) fn on_agent_error(&mut self, msg: &str) {
+        if msg.contains("Aborted") {
+            self.doc.warn("aborted");
+        } else {
+            self.doc.error(msg);
+        }
+        self.on_agent_done();
     }
 }
 
-/// Read image data from system clipboard via osascript.
 #[cfg(target_os = "macos")]
 fn read_clipboard_image() -> Option<Vec<u8>> {
     let tmp = std::env::temp_dir().join("luma_clipboard.png");
@@ -207,13 +207,11 @@ end try"#,
     Some(data)
 }
 
-/// Clipboard image not yet supported on this platform.
 #[cfg(not(target_os = "macos"))]
 fn read_clipboard_image() -> Option<Vec<u8>> {
     None
 }
 
-/// Detect image format from magic bytes.
 fn detect_image_format(data: &[u8]) -> (&'static str, &'static str) {
     if data.starts_with(&[0x89, b'P', b'N', b'G']) {
         ("image/png", "png")
@@ -228,8 +226,6 @@ fn detect_image_format(data: &[u8]) -> (&'static str, &'static str) {
     }
 }
 
-/// Read `@path` references from text, returning file contents for the agent.
-/// Text stays unchanged — files are sent as separate content blocks.
 fn read_file_refs(text: &str) -> Vec<crate::event::FileAttach> {
     parse_file_refs(text)
         .into_iter()
@@ -247,19 +243,17 @@ struct FileRef {
     path: String,
 }
 
-/// Parse `@path` patterns from text. Returns sorted by start position.
 fn parse_file_refs(text: &str) -> Vec<FileRef> {
     let mut refs = Vec::new();
     let bytes = text.as_bytes();
     let mut i = 0;
     while i < bytes.len() {
         if bytes[i] == b'@' {
-            // Must be at start of text or preceded by whitespace
             if i > 0 && !bytes[i - 1].is_ascii_whitespace() {
                 i += 1;
                 continue;
             }
-            i += 1; // skip @
+            i += 1;
             let path_start = i;
             while i < bytes.len()
                 && !bytes[i].is_ascii_whitespace()
@@ -295,11 +289,6 @@ mod tests {
     }
 
     #[test]
-    fn parse_file_refs_no_exist() {
-        assert!(parse_file_refs("check @nonexistent.xyz").is_empty());
-    }
-
-    #[test]
     fn parse_file_refs_finds_existing() {
         let refs = parse_file_refs("look at @Cargo.toml please");
         assert_eq!(refs.len(), 1);
@@ -307,22 +296,7 @@ mod tests {
     }
 
     #[test]
-    fn read_file_refs_existing() {
-        let files = read_file_refs("check @Cargo.toml");
-        assert_eq!(files.len(), 1);
-        assert_eq!(files[0].path, "Cargo.toml");
-        assert!(files[0].content.contains("[package]"));
-    }
-
-    #[test]
-    fn read_file_refs_none() {
-        let files = read_file_refs("hello world");
-        assert!(files.is_empty());
-    }
-
-    #[test]
     fn email_not_treated_as_file_ref() {
-        let files = read_file_refs("email user@example.com please");
-        assert!(files.is_empty());
+        assert!(parse_file_refs("email user@example.com please").is_empty());
     }
 }

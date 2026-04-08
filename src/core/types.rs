@@ -2,18 +2,18 @@
 use serde::{Deserialize, Serialize};
 
 /// A content block within a message.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ContentBlock {
     Text { text: String },
     Image { media_type: String, id: String },
+    Paste { text: String },
 }
 
 /// A chat message in the conversation history.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Message {
     pub role: Role,
-    #[serde(deserialize_with = "deserialize_content")]
     pub content: Vec<ContentBlock>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tool_call_id: Option<String>,
@@ -22,16 +22,36 @@ pub struct Message {
 }
 
 impl Message {
-    /// Concatenate all text blocks into a single string.
+    /// Concatenate all text + paste blocks into a single string.
     pub fn text(&self) -> String {
         let mut out = String::new();
         for block in &self.content {
-            if let ContentBlock::Text { text } = block {
-                if !out.is_empty() && !text.is_empty() {
-                    out.push('\n');
-                }
-                out.push_str(text);
+            let t = match block {
+                ContentBlock::Text { text } => text.as_str(),
+                ContentBlock::Paste { text } => text.as_str(),
+                _ => continue,
+            };
+            if !out.is_empty() && !t.is_empty() {
+                out.push('\n');
             }
+            out.push_str(t);
+        }
+        out
+    }
+
+    /// Concatenate text from standalone content blocks (no Message needed).
+    pub fn content_text(blocks: &[ContentBlock]) -> String {
+        let mut out = String::new();
+        for b in blocks {
+            let t = match b {
+                ContentBlock::Text { text } => text.as_str(),
+                ContentBlock::Paste { text } => text.as_str(),
+                _ => continue,
+            };
+            if !out.is_empty() && !t.is_empty() {
+                out.push('\n');
+            }
+            out.push_str(t);
         }
         out
     }
@@ -49,9 +69,10 @@ impl Message {
 
     /// Whether there is any text content.
     pub fn has_text(&self) -> bool {
-        self.content
-            .iter()
-            .any(|b| matches!(b, ContentBlock::Text { text } if !text.is_empty()))
+        self.content.iter().any(|b| match b {
+            ContentBlock::Text { text } | ContentBlock::Paste { text } => !text.is_empty(),
+            _ => false,
+        })
     }
 
     /// Whether message contains image blocks.
@@ -96,38 +117,6 @@ impl Message {
             tool_calls: None,
         }
     }
-}
-
-/// Deserialize content from either a plain string (legacy) or Vec<ContentBlock>.
-fn deserialize_content<'de, D>(deserializer: D) -> Result<Vec<ContentBlock>, D::Error>
-where
-    D: serde::Deserializer<'de>,
-{
-    use serde::de;
-
-    struct ContentVisitor;
-
-    impl<'de> de::Visitor<'de> for ContentVisitor {
-        type Value = Vec<ContentBlock>;
-
-        fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-            f.write_str("a string or array of content blocks")
-        }
-
-        fn visit_str<E: de::Error>(self, v: &str) -> Result<Self::Value, E> {
-            Ok(vec![ContentBlock::Text { text: v.to_owned() }])
-        }
-
-        fn visit_string<E: de::Error>(self, v: String) -> Result<Self::Value, E> {
-            Ok(vec![ContentBlock::Text { text: v }])
-        }
-
-        fn visit_seq<A: de::SeqAccess<'de>>(self, seq: A) -> Result<Self::Value, A::Error> {
-            Vec::deserialize(de::value::SeqAccessDeserializer::new(seq))
-        }
-    }
-
-    deserializer.deserialize_any(ContentVisitor)
 }
 
 /// Message role.
@@ -260,19 +249,12 @@ mod tests {
     }
 
     #[test]
-    fn deserialize_legacy_string_content() {
-        let json = r#"{"role":"user","content":"hello"}"#;
-        let msg: Message = serde_json::from_str(json).unwrap();
-        assert_eq!(msg.text(), "hello");
-        assert_eq!(msg.content.len(), 1);
-    }
-
-    #[test]
-    fn deserialize_array_content() {
+    fn deserialize_content_blocks() {
         let json = r#"{"role":"user","content":[{"type":"text","text":"hi"},{"type":"image","media_type":"image/png","id":"img_1"}]}"#;
         let msg: Message = serde_json::from_str(json).unwrap();
         assert_eq!(msg.text(), "hi");
         assert!(msg.has_images());
+        assert_eq!(msg.content.len(), 2);
     }
 
     #[test]

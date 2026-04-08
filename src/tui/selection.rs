@@ -1,7 +1,7 @@
-/// Text selection, auto-scroll during drag, and cell-buffer-based copy.
-use crate::tui::output::OutputLog;
 use crate::tui::term;
 use crate::tui::text::ScreenBuffer;
+/// Text selection, auto-scroll during drag, and cell-buffer-based copy.
+use crate::tui::view::ViewState;
 use std::io::Write;
 
 const EDGE_SCROLL_ZONE: u16 = 2;
@@ -64,18 +64,18 @@ impl Selection {
     }
 
     /// Auto-scroll if drag is near edge of output region. Returns true if scrolled.
-    pub fn edge_scroll(&self, output: &mut OutputLog, region_top: u16, region_height: u16) -> bool {
+    pub fn edge_scroll(&self, view: &mut ViewState, region_top: u16, region_height: u16) -> bool {
         if !self.is_active {
             return false;
         }
         let region_bottom = region_top + region_height;
 
         if self.end_row < region_top + EDGE_SCROLL_ZONE {
-            output.scroll_up(EDGE_SCROLL_SPEED);
+            view.scroll_up(EDGE_SCROLL_SPEED);
             return true;
         }
         if self.end_row >= region_bottom.saturating_sub(EDGE_SCROLL_ZONE) {
-            output.scroll_down(EDGE_SCROLL_SPEED);
+            view.scroll_down(EDGE_SCROLL_SPEED);
             return true;
         }
         false
