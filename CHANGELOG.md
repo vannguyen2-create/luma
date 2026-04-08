@@ -5,6 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0-beta.3] - 2026-04-08
+
+### Added
+- **GitHub tools**: `GhFile`, `GhLs`, `GhSearch` for browsing remote repositories
+- **WebFetch tool**: fetch and extract web page content with BM25 relevance ranking
+- **WebSearch**: improved client-side search with structured result display
+- **Tab completion**: Tab fills dropdown item without accepting; preserves mode cycling
+- `/resume` command hidden when already in a thread
+
+### Fixed
+- SSE stream corrupting multi-byte UTF-8 characters (e.g. Vietnamese diacritics) when chunk boundary splits a codepoint
+- UTF-8 panic in syntax highlighter when operator follows multi-byte character
+- `ContentBlock::Paste` not serialized to API, causing 400 empty content errors
+- Token counting and cache display in status bar
+- Session resume showing blank screen due to lazy block rendering
+- Install scripts not adding PATH, platform-aware self-update
+
 ## [0.2.0] - 2026-04-06
 
 ### Added
