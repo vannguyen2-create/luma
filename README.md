@@ -6,10 +6,16 @@
 
 ## Install
 
-macOS, Linux, and WSL (aarch64, x86_64):
+macOS, Linux, WSL (aarch64, x86_64):
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/nghyane/luma/master/install.sh | sh
+```
+
+Windows (PowerShell):
+
+```powershell
+irm https://raw.githubusercontent.com/nghyane/luma/master/install.ps1 | iex
 ```
 
 Update: `luma update`
@@ -26,15 +32,15 @@ Update: `luma update`
 
 **@file mention** — type `@` in prompt to autocomplete file paths. File content injected as context when sent. Multiple files supported.
 
-**Image paste** — paste (Cmd+V / Ctrl+V) when clipboard has an image. Sent as multimodal content to the model.
+**Inline attachments** — images and pasted text blocks insert at cursor position. Rendered as inline chips in both prompt and chat. Backspace removes them naturally.
+
+**Drag & drop** — drop image files onto the terminal to attach. Supports `file://` paths, quoted paths, and common image formats.
 
 **Tools** — `Read`, `Write`, `Edit`, `Bash`, `Grep`, `Glob`, `apply_patch`. Web search via server-side (Claude) or client fallback.
 
-**Skills** — compatible with Claude Code skill format:
-- `.agents/skills/`, `.claude/skills/` (project-level)
-- `~/.agents/skills/`, `~/.claude/skills/`, `~/.config/luma/skills/` (user-level)
+**Skills** — compatible with Claude Code skill format. Loaded from `.agents/skills/`, `.claude/skills/` (project) and `~/` equivalents.
 
-**Sessions** — `/resume` to continue last session, `/sessions` to browse all, `/new` to start fresh.
+**Sessions** — `/resume`, `/sessions`, `/new`. Attachments preserved across resume.
 
 ## Keyboard Shortcuts
 
@@ -43,21 +49,17 @@ Update: `luma update`
 | `Tab` | Cycle mode (Rush → Smart → Deep) |
 | `Enter` | Send message |
 | `Alt+Enter` | Newline in prompt |
-| `Paste` | Text paste, or image if clipboard has no text |
+| `Paste` | Text inline or block attachment (≥5 lines) |
 | `Ctrl+T` | Cycle thinking level |
-| `Escape` | Abort streaming (press twice) |
-| `Ctrl+C` | Abort streaming / clear input / quit |
+| `Esc` | Interrupt streaming (press twice to force) |
+| `Ctrl+C` | Clear input / quit (when empty) |
 | `↑` `↓` | History / dropdown navigation |
 
-## Auth
+## Config
 
-Zero-config — reuses credentials from [Claude Code](https://github.com/anthropics/claude-code) and [Codex CLI](https://github.com/openai/codex). OAuth tokens auto-refresh.
+All data in `~/.config/luma/` — preferences, sessions, skills. Zero-config auth reuses [Claude Code](https://github.com/anthropics/claude-code) / [Codex CLI](https://github.com/openai/codex) credentials. OAuth auto-refresh.
 
-## Configuration
-
-Preferences stored in `~/.config/luma/preferences.json` — mode, model, thinking level. Changed through TUI, no manual editing needed.
-
-Debug: `LUMA_DEBUG=1 luma` → logs to `/tmp/luma.log`
+Debug: `LUMA_DEBUG=1 luma` → `/tmp/luma.log`
 
 ## License
 

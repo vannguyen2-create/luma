@@ -11,8 +11,9 @@ OS="$(uname -s)"
 ARCH="$(uname -m)"
 
 case "$OS" in
-  Darwin) os="apple-darwin" ;;
-  Linux)  os="unknown-linux-musl" ;;
+  Darwin)          os="apple-darwin" ;;
+  Linux)           os="unknown-linux-musl" ;;
+  MINGW*|MSYS*|CYGWIN*) os="pc-windows-msvc"; EXT=".exe"; ARCHIVE="zip" ;;
   *) echo "Unsupported OS: $OS" >&2; exit 1 ;;
 esac
 
@@ -23,6 +24,8 @@ case "$ARCH" in
 esac
 
 TARGET="${arch}-${os}"
+EXT="${EXT:-}"
+ARCHIVE="${ARCHIVE:-tar.gz}"
 
 # Find latest release (or use LUMA_VERSION env)
 if [ -n "$LUMA_VERSION" ]; then
@@ -38,23 +41,27 @@ if [ -z "$TAG" ]; then
   exit 1
 fi
 
-URL="https://github.com/$REPO/releases/download/$TAG/luma-${TARGET}.tar.gz"
+URL="https://github.com/$REPO/releases/download/$TAG/luma-${TARGET}.${ARCHIVE}"
 
 echo "Installing luma $TAG ($TARGET)"
 echo "  from: $URL"
-echo "  to:   $INSTALL_DIR/luma"
+echo "  to:   $INSTALL_DIR/luma${EXT}"
 
 # Download and extract
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
 
-curl -fsSL "$URL" -o "$TMP/luma.tar.gz"
-tar xzf "$TMP/luma.tar.gz" -C "$TMP"
+curl -fsSL "$URL" -o "$TMP/luma.${ARCHIVE}"
+if [ "$ARCHIVE" = "zip" ]; then
+  unzip -q "$TMP/luma.zip" -d "$TMP"
+else
+  tar xzf "$TMP/luma.tar.gz" -C "$TMP"
+fi
 
 # Install
 mkdir -p "$INSTALL_DIR"
-mv "$TMP/luma" "$INSTALL_DIR/luma"
-chmod +x "$INSTALL_DIR/luma"
+mv "$TMP/luma${EXT}" "$INSTALL_DIR/luma${EXT}"
+chmod +x "$INSTALL_DIR/luma${EXT}" 2>/dev/null || true
 
 echo "Installed luma $TAG"
 
