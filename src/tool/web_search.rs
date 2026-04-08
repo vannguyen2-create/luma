@@ -4,11 +4,13 @@
 /// Supports Exa, Tavily, and SearXNG backends.
 use crate::core::tool::Tool;
 use crate::core::types::ToolSchema;
-use anyhow::{bail, Result};
-use std::pin::Pin;
+use anyhow::{Result, bail};
 use std::future::Future;
+use std::pin::Pin;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
+
+const SEARCH_TIMEOUT_SECS: u64 = 15;
 
 /// Search backend configuration.
 #[derive(Clone)]
@@ -24,23 +26,27 @@ pub struct WebSearchTool {
 }
 
 impl WebSearchTool {
+    /// Create a new web search tool with the given backend.
     pub fn new(backend: SearchBackend) -> Self {
         Self { backend }
     }
 }
 
 impl Tool for WebSearchTool {
-    fn name(&self) -> &str { "WebSearch" }
+    fn name(&self) -> &str {
+        "WebSearch"
+    }
 
     fn schema(&self) -> ToolSchema {
         ToolSchema {
             name: "WebSearch".into(),
             description: concat!(
                 "Search the web for current information.\n",
-                "- Returns titles, URLs, and snippets for top results.\n",
+                "- Returns titles, URLs, and relevant excerpts for top results.\n",
                 "- Use for documentation, API references, error messages, latest versions.\n",
                 "- Do not use for questions answerable from codebase alone.",
-            ).into(),
+            )
+            .into(),
             parameters: serde_json::json!({
                 "type": "object",
                 "properties": {
@@ -61,32 +67,39 @@ impl Tool for WebSearchTool {
     fn execute(
         &self,
         args: serde_json::Value,
-        _output_tx: mpsc::Sender<String>,
-        _cancel: CancellationToken,
+        output_tx: mpsc::Sender<String>,
+        cancel: CancellationToken,
     ) -> Pin<Box<dyn Future<Output = Result<String>> + Send + '_>> {
         Box::pin(async move {
             let query = args["query"].as_str().unwrap_or("");
-            if query.is_empty() { bail!("missing query"); }
+            if query.is_empty() {
+                bail!("missing query");
+            }
             let max = args["max_results"].as_u64().unwrap_or(5) as usize;
 
-            let results = match &self.backend {
-                SearchBackend::Exa { api_key } => search_exa(api_key, query, max).await?,
-                SearchBackend::Tavily { api_key } => search_tavily(api_key, query, max).await?,
-                SearchBackend::SearXNG { base_url } => search_searxng(base_url, query, max).await?,
+            let client = reqwest::Client::builder()
+                .timeout(std::time::Duration::from_secs(SEARCH_TIMEOUT_SECS))
+                .build()?;
+
+            let results = tokio::select! {
+                biased;
+                _ = cancel.cancelled() => bail!("aborted"),
+                r = search(&self.backend, &client, query, max) => r?,
             };
 
             if results.is_empty() {
                 return Ok("No results found.".into());
             }
 
-            // Stream structured output for UI: "title\nurl\nsnippet\n\n"
+            // Stream structured output for UI
             for r in &results {
                 let mut entry = format!("{}\n{}\n", r.title, r.url);
                 if !r.snippet.is_empty() {
-                    entry.push_str(&format!("{}\n", r.snippet));
+                    entry.push_str(&r.snippet);
+                    entry.push('\n');
                 }
                 entry.push('\n');
-                let _ = _output_tx.send(entry).await;
+                let _ = output_tx.send(entry).await;
             }
 
             // Model-facing result: numbered list
@@ -109,57 +122,121 @@ struct SearchResult {
     snippet: String,
 }
 
-async fn search_exa(api_key: &str, query: &str, max: usize) -> Result<Vec<SearchResult>> {
-    let client = reqwest::Client::new();
+/// Dispatch to the appropriate backend.
+async fn search(
+    backend: &SearchBackend,
+    client: &reqwest::Client,
+    query: &str,
+    max: usize,
+) -> Result<Vec<SearchResult>> {
+    match backend {
+        SearchBackend::Exa { api_key } => search_exa(client, api_key, query, max).await,
+        SearchBackend::Tavily { api_key } => search_tavily(client, api_key, query, max).await,
+        SearchBackend::SearXNG { base_url } => search_searxng(client, base_url, query, max).await,
+    }
+}
+
+/// Exa: type "auto" (neural + keyword), highlights for relevant excerpts.
+async fn search_exa(
+    client: &reqwest::Client,
+    api_key: &str,
+    query: &str,
+    max: usize,
+) -> Result<Vec<SearchResult>> {
     let resp = client
         .post("https://api.exa.ai/search")
         .header("x-api-key", api_key)
-        .header("Content-Type", "application/json")
         .json(&serde_json::json!({
             "query": query,
             "num_results": max,
-            "type": "keyword"
+            "type": "auto",
+            "contents": {
+                "highlights": { "query": query }
+            }
         }))
         .send()
         .await?;
 
     let body: serde_json::Value = resp.json().await?;
-    let results = body["results"].as_array()
-        .map(|arr| arr.iter().map(|r| SearchResult {
-            title: r["title"].as_str().unwrap_or("").to_owned(),
-            url: r["url"].as_str().unwrap_or("").to_owned(),
-            snippet: r["text"].as_str().unwrap_or("").chars().take(200).collect(),
-        }).collect())
+    let results = body["results"]
+        .as_array()
+        .map(|arr| {
+            arr.iter()
+                .map(|r| {
+                    let highlights = r["highlights"]
+                        .as_array()
+                        .map(|h| {
+                            h.iter()
+                                .filter_map(|v| v.as_str())
+                                .collect::<Vec<_>>()
+                                .join(" ")
+                        })
+                        .unwrap_or_default();
+                    SearchResult {
+                        title: r["title"].as_str().unwrap_or("Untitled").to_owned(),
+                        url: r["url"].as_str().unwrap_or("").to_owned(),
+                        snippet: highlights,
+                    }
+                })
+                .collect()
+        })
         .unwrap_or_default();
     Ok(results)
 }
 
-async fn search_tavily(api_key: &str, query: &str, max: usize) -> Result<Vec<SearchResult>> {
-    let client = reqwest::Client::new();
+/// Tavily: include_answer for direct answers, content for snippets.
+async fn search_tavily(
+    client: &reqwest::Client,
+    api_key: &str,
+    query: &str,
+    max: usize,
+) -> Result<Vec<SearchResult>> {
     let resp = client
         .post("https://api.tavily.com/search")
-        .header("Content-Type", "application/json")
         .json(&serde_json::json!({
             "api_key": api_key,
             "query": query,
             "max_results": max,
+            "include_answer": true,
         }))
         .send()
         .await?;
 
     let body: serde_json::Value = resp.json().await?;
-    let results = body["results"].as_array()
-        .map(|arr| arr.iter().map(|r| SearchResult {
-            title: r["title"].as_str().unwrap_or("").to_owned(),
-            url: r["url"].as_str().unwrap_or("").to_owned(),
-            snippet: r["content"].as_str().unwrap_or("").chars().take(200).collect(),
-        }).collect())
-        .unwrap_or_default();
+
+    let mut results: Vec<SearchResult> = Vec::new();
+
+    // Prepend Tavily's direct answer if available
+    if let Some(answer) = body["answer"].as_str()
+        && !answer.is_empty()
+    {
+        results.push(SearchResult {
+            title: "Direct Answer".to_owned(),
+            url: String::new(),
+            snippet: answer.to_owned(),
+        });
+    }
+
+    if let Some(arr) = body["results"].as_array() {
+        for r in arr {
+            results.push(SearchResult {
+                title: r["title"].as_str().unwrap_or("").to_owned(),
+                url: r["url"].as_str().unwrap_or("").to_owned(),
+                snippet: r["content"].as_str().unwrap_or("").to_owned(),
+            });
+        }
+    }
+
     Ok(results)
 }
 
-async fn search_searxng(base_url: &str, query: &str, max: usize) -> Result<Vec<SearchResult>> {
-    let client = reqwest::Client::new();
+/// SearXNG: JSON format, take top N results.
+async fn search_searxng(
+    client: &reqwest::Client,
+    base_url: &str,
+    query: &str,
+    max: usize,
+) -> Result<Vec<SearchResult>> {
     let url = format!("{}/search", base_url.trim_end_matches('/'));
     let resp = client
         .get(&url)
@@ -168,12 +245,18 @@ async fn search_searxng(base_url: &str, query: &str, max: usize) -> Result<Vec<S
         .await?;
 
     let body: serde_json::Value = resp.json().await?;
-    let results = body["results"].as_array()
-        .map(|arr| arr.iter().take(max).map(|r| SearchResult {
-            title: r["title"].as_str().unwrap_or("").to_owned(),
-            url: r["url"].as_str().unwrap_or("").to_owned(),
-            snippet: r["content"].as_str().unwrap_or("").chars().take(200).collect(),
-        }).collect())
+    let results = body["results"]
+        .as_array()
+        .map(|arr| {
+            arr.iter()
+                .take(max)
+                .map(|r| SearchResult {
+                    title: r["title"].as_str().unwrap_or("").to_owned(),
+                    url: r["url"].as_str().unwrap_or("").to_owned(),
+                    snippet: r["content"].as_str().unwrap_or("").to_owned(),
+                })
+                .collect()
+        })
         .unwrap_or_default();
     Ok(results)
 }

@@ -49,6 +49,34 @@ pub fn format_tool_summary(name: &str, args: &serde_json::Value) -> String {
                 format!("\"{query}\"")
             }
         }
+        "webfetch" => {
+            let url = args.get("url").and_then(|v| v.as_str()).unwrap_or("");
+            if url.chars().count() > 60 {
+                let truncated: String = url.chars().take(57).collect();
+                format!("{truncated}...")
+            } else {
+                url.to_owned()
+            }
+        }
+        "ghfile" => {
+            let repo = args.get("repo").and_then(|v| v.as_str()).unwrap_or("");
+            let path = args.get("path").and_then(|v| v.as_str()).unwrap_or("");
+            format!("{repo} {path}")
+        }
+        "ghls" => {
+            let repo = args.get("repo").and_then(|v| v.as_str()).unwrap_or("");
+            let path = args.get("path").and_then(|v| v.as_str()).unwrap_or("");
+            if path.is_empty() {
+                repo.to_owned()
+            } else {
+                format!("{repo} {path}")
+            }
+        }
+        "ghsearch" => {
+            let repo = args.get("repo").and_then(|v| v.as_str()).unwrap_or("");
+            let query = args.get("query").and_then(|v| v.as_str()).unwrap_or("");
+            format!("{repo} \"{query}\"")
+        }
         "bash" | "exec_command" | "shell" => {
             let cmd = args.get("command").and_then(|v| v.as_str()).unwrap_or("");
             if cmd.chars().count() > 60 {

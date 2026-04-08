@@ -1,6 +1,6 @@
+use super::Action;
 /// Agent lifecycle — spawn, submit, done handling.
 use super::state::RunState;
-use super::Action;
 use crate::event::AgentCommand;
 use crate::tui::status::StatusState;
 use tokio_util::sync::CancellationToken;
@@ -128,6 +128,10 @@ impl super::App {
                 backend,
             )));
         }
+        registry.register(Box::new(crate::tool::web_fetch::WebFetchTool));
+        registry.register(Box::new(crate::tool::gh_file::GhFileTool));
+        registry.register(Box::new(crate::tool::gh_ls::GhLsTool));
+        registry.register(Box::new(crate::tool::gh_search::GhSearchTool));
 
         self.agent.tx = Some(crate::core::agent::spawn(config, registry, tx));
     }
