@@ -47,7 +47,7 @@ pub async fn post_sse(
         bail!("{status}: {msg}");
     }
 
-    let mut buf = String::new();
+    let mut raw_buf: Vec<u8> = Vec::new();
     let mut current_event = String::new();
     let mut response = response;
     // Timeout between chunks — if server stops sending data for 120s, bail.
@@ -62,12 +62,14 @@ pub async fn post_sse(
         let Some(chunk) = chunk else {
             break;
         };
-        buf.push_str(&String::from_utf8_lossy(&chunk));
+        raw_buf.extend_from_slice(&chunk);
 
+        // Process only complete lines (ending with \n) to avoid splitting
+        // multi-byte UTF-8 characters (e.g. Vietnamese diacritics) across chunks.
         let mut start = 0;
-        while let Some(rel_pos) = buf[start..].find('\n') {
+        while let Some(rel_pos) = raw_buf[start..].iter().position(|&b| b == b'\n') {
             let newline_pos = start + rel_pos;
-            let line = &buf[start..newline_pos];
+            let line = String::from_utf8_lossy(&raw_buf[start..newline_pos]);
             start = newline_pos + 1;
 
             if let Some(rest) = line.strip_prefix("event:") {
@@ -94,7 +96,7 @@ pub async fn post_sse(
             }
         }
         if start > 0 {
-            buf.drain(..start);
+            raw_buf.drain(..start);
         }
     }
 
