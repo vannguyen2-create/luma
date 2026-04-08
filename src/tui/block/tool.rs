@@ -171,9 +171,11 @@ fn render_search(tb: &ToolBlock, w: usize) -> Vec<Line> {
         } else {
             format!(" -- {domain}")
         };
-        let max_title = w.saturating_sub(prefix_len + suffix.len());
-        let display_title = if title.len() > max_title && max_title > 3 {
-            format!("{}...", &title[..max_title - 3])
+        let max_chars = w.saturating_sub(prefix_len + suffix.len());
+        let char_count = title.chars().count();
+        let display_title = if char_count > max_chars && max_chars > 3 {
+            let truncated: String = title.chars().take(max_chars - 3).collect();
+            format!("{truncated}...")
         } else {
             title.to_owned()
         };

@@ -37,3 +37,4 @@ Bất biến. Không ngoại lệ. Mỗi PR phải pass tất cả.
 19. **Generic khi ≥ 2 concrete types dùng.** Không generic "cho tương lai".
 20. **Owned ở API boundary, borrowed ở hot path.** `String` cho public API, `&str` cho internal render.
 21. **Đo trước khi optimize.** Có benchmark evidence mới dùng `SmallVec`, pre-alloc, etc.
+22. **Commit:** Conventional Commits (`type(scope): summary`). Một commit = một mục đích. Nhiều file cùng giải quyết một user story → gộp. Bandaid + real fix cùng bug → squash. Chỉ tách khi hai thay đổi độc lập — tách ra vẫn build, vẫn đúng riêng lẻ.
