@@ -41,7 +41,15 @@ impl PromptState {
         self.comp.commands.push(Command {
             name: name.into(),
             desc: desc.into(),
+            visible: true,
         });
+    }
+
+    /// Toggle visibility of a registered slash command.
+    pub fn set_command_visible(&mut self, name: &str, visible: bool) {
+        if let Some(cmd) = self.comp.commands.iter_mut().find(|c| c.name == name) {
+            cmd.visible = visible;
+        }
     }
 
     /// Attach an image at cursor position.
@@ -429,5 +437,19 @@ mod tests {
         p.handle_key(&key(KeyCode::Tab));
         // dropdown_idx preserved — Tab only fills, does not close
         assert_eq!(p.comp.dropdown_idx, 1);
+    }
+
+    #[test]
+    fn set_command_visible_hides_from_dropdown() {
+        let mut p = PromptState::new();
+        p.add_command("resume", "resume last session");
+        p.add_command("new", "new thread");
+        type_str(&mut p, "/");
+        assert_eq!(p.get_matches().len(), 2);
+        p.buf.clear();
+        p.set_command_visible("resume", false);
+        type_str(&mut p, "/");
+        assert_eq!(p.get_matches().len(), 1);
+        assert_eq!(p.get_matches()[0].name, "new");
     }
 }

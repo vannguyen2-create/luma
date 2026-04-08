@@ -20,6 +20,7 @@ impl super::App {
                 self.doc.info("new thread started");
                 self.doc.divider();
                 self.ui.status.reset_cache();
+                self.sync_prompt_commands();
                 Action::Render
             }
             "model" => {
@@ -116,6 +117,7 @@ impl super::App {
         self.view.clear();
         self.doc.divider_with_label(self.config.mode.as_str());
         self.update_status();
+        self.sync_prompt_commands();
     }
 
     pub(super) fn resume_session(&mut self, picker_id: &str) {
@@ -164,6 +166,7 @@ impl super::App {
             .unwrap_or(200_000);
         let pct = ((total as f64 / ctx as f64) * 100.0).min(100.0) as u8;
         self.ui.status.set_context(total, pct);
+        self.sync_prompt_commands();
     }
 
     pub(super) fn render_history(
@@ -289,5 +292,11 @@ impl super::App {
             })
             .unwrap_or("");
         self.ui.status.set_provider(provider);
+    }
+
+    /// Sync command visibility based on current document state.
+    pub(super) fn sync_prompt_commands(&mut self) {
+        let is_new_thread = !self.doc.has_user_content();
+        self.ui.prompt.set_command_visible("resume", is_new_thread);
     }
 }

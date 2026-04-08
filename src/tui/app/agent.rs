@@ -35,6 +35,7 @@ impl super::App {
         self.ensure_agent_loop();
         self.enter_chat();
         self.doc.user_message(&content);
+        self.sync_prompt_commands();
         self.agent.state = RunState::Streaming;
         self.ui.status.set_state(StatusState::Thinking);
         self.agent.turn_start = Some(std::time::Instant::now());

@@ -19,6 +19,11 @@ impl Document {
         &self.blocks
     }
 
+    /// Whether the document contains any user message.
+    pub fn has_user_content(&self) -> bool {
+        self.blocks.iter().any(|b| matches!(b, Block::User(_)))
+    }
+
     #[cfg(test)]
     pub fn len(&self) -> usize {
         self.blocks.len()
@@ -358,5 +363,28 @@ mod tests {
         doc.append_token("line2");
         doc.newline();
         assert_eq!(doc.len(), 1); // single Text block
+    }
+
+    #[test]
+    fn has_user_content_empty() {
+        let doc = Document::new();
+        assert!(!doc.has_user_content());
+    }
+
+    #[test]
+    fn has_user_content_after_message() {
+        let mut doc = Document::new();
+        doc.info("welcome");
+        assert!(!doc.has_user_content());
+        doc.user_message(&text_content("hello"));
+        assert!(doc.has_user_content());
+    }
+
+    #[test]
+    fn has_user_content_resets_on_clear() {
+        let mut doc = Document::new();
+        doc.user_message(&text_content("hello"));
+        doc.clear();
+        assert!(!doc.has_user_content());
     }
 }

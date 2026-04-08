@@ -11,6 +11,7 @@ const MAX_CANDIDATES: usize = 50;
 pub struct Command {
     pub name: String,
     pub desc: String,
+    pub visible: bool,
 }
 
 /// Autocomplete state for commands and @file.
@@ -84,15 +85,15 @@ impl Completion {
         self.file_cache_valid = true;
     }
 
-    /// Get matching commands for a query.
+    /// Get matching visible commands for a query.
     pub fn command_matches(&self, query: &str) -> Vec<&Command> {
         let q = query.to_lowercase();
         if q.is_empty() {
-            self.commands.iter().collect()
+            self.commands.iter().filter(|c| c.visible).collect()
         } else {
             self.commands
                 .iter()
-                .filter(|c| c.name.starts_with(&q))
+                .filter(|c| c.visible && c.name.starts_with(&q))
                 .collect()
         }
     }
@@ -206,13 +207,32 @@ mod tests {
         comp.commands.push(Command {
             name: "model".into(),
             desc: "switch".into(),
+            visible: true,
         });
         comp.commands.push(Command {
             name: "new".into(),
             desc: "new thread".into(),
+            visible: true,
         });
         assert_eq!(comp.command_matches("").len(), 2);
         assert_eq!(comp.command_matches("mo").len(), 1);
+    }
+
+    #[test]
+    fn command_matches_hides_invisible() {
+        let mut comp = Completion::new();
+        comp.commands.push(Command {
+            name: "resume".into(),
+            desc: "resume".into(),
+            visible: false,
+        });
+        comp.commands.push(Command {
+            name: "new".into(),
+            desc: "new thread".into(),
+            visible: true,
+        });
+        assert_eq!(comp.command_matches("").len(), 1);
+        assert_eq!(comp.command_matches("re").len(), 0);
     }
 
     #[test]
