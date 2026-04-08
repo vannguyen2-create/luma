@@ -334,7 +334,7 @@ fn content_blocks_to_api(
     resolve: &crate::core::provider::ImageResolver,
 ) -> Vec<serde_json::Value> {
     blocks.iter().filter_map(|b| match b {
-        ContentBlock::Text { text } if !text.is_empty() => {
+        ContentBlock::Text { text } | ContentBlock::Paste { text } if !text.is_empty() => {
             Some(serde_json::json!({"type": "text", "text": text}))
         }
         ContentBlock::Image { media_type, id } => {

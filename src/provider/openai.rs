@@ -161,7 +161,7 @@ fn to_api_messages(
             Role::User => {
                 if msg.has_images() {
                     let content: Vec<serde_json::Value> = msg.content.iter().filter_map(|b| match b {
-                        ContentBlock::Text { text } if !text.is_empty() => {
+                        ContentBlock::Text { text } | ContentBlock::Paste { text } if !text.is_empty() => {
                             Some(serde_json::json!({"type": "text", "text": text}))
                         }
                         ContentBlock::Image { media_type, id } => {
