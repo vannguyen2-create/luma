@@ -337,20 +337,29 @@ fn template_string_end(code: &str, start: usize) -> Option<usize> {
 
 fn operator_end(code: &str, start: usize, lang: Option<&str>) -> usize {
     let bytes = code.as_bytes();
-    let mut best_end = if is_operator(&code[start..start + 1], lang) {
-        start + 1
+    let next = start + 1;
+    // Non-ASCII byte at start → not an operator, skip this char
+    if next > bytes.len() || !code.is_char_boundary(next) {
+        // Advance past the full UTF-8 char
+        let mut end = next;
+        while end < bytes.len() && !code.is_char_boundary(end) {
+            end += 1;
+        }
+        return end;
+    }
+    let mut best_end = if is_operator(&code[start..next], lang) {
+        next
     } else {
-        return start + 1;
+        return next;
     };
-    let mut end = start + 1;
+    let mut end = next;
     while end < bytes.len() {
-        let next = end + 1;
-        if next > bytes.len() {
+        let n = end + 1;
+        if n > bytes.len() || !code.is_char_boundary(n) {
             break;
         }
-        let token = &code[start..next];
-        if is_operator(token, lang) {
-            best_end = next;
+        if is_operator(&code[start..n], lang) {
+            best_end = n;
             end += 1;
             continue;
         }
@@ -548,5 +557,14 @@ mod tests {
             "foo should be function color: {:?}",
             spans.iter().map(|s| (&s.text, s.fg)).collect::<Vec<_>>()
         );
+    }
+
+    #[test]
+    fn highlight_utf8_with_operators() {
+        // Regression: "**Đ" panicked on byte boundary inside UTF-8 char
+        let code = "**Đo trước khi optimize.**";
+        let spans = highlight_code_with_lang(code, None);
+        let text: String = spans.iter().map(|s| s.text.as_str()).collect();
+        assert!(text.contains("Đo"), "UTF-8 preserved: {text}");
     }
 }
