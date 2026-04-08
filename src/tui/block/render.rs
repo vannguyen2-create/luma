@@ -38,7 +38,6 @@ pub fn render_block(
             )])]
         }
         Block::Info(t) => wrap_icon(super::chrome::ICON_INFO, palette::DIM, t, width),
-        Block::Success(t) => wrap_icon(super::chrome::ICON_SUCCESS, palette::SUCCESS, t, width),
         Block::Error(t) => wrap_icon(super::chrome::ICON_ERROR, palette::ERROR, t, width),
         Block::Warn(t) => wrap_icon(super::chrome::ICON_WARN, palette::WARN, t, width),
         Block::User(lines) => render_user(lines, width),

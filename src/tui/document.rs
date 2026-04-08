@@ -86,12 +86,6 @@ impl Document {
         self.blocks.push(block);
     }
 
-    #[allow(dead_code)]
-    pub fn success(&mut self, text: &str) {
-        self.commit_last();
-        self.blocks.push(Block::Success(text.to_owned()));
-    }
-
     pub fn error(&mut self, text: &str) {
         self.commit_last();
         self.blocks.push(Block::Error(text.to_owned()));

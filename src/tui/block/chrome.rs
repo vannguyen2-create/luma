@@ -8,7 +8,6 @@ use crate::tui::theme::{icon, palette};
 use smallvec::smallvec;
 
 pub const ICON_INFO: &str = icon::INFO;
-pub const ICON_SUCCESS: &str = icon::SUCCESS;
 pub const ICON_ERROR: &str = icon::ERROR;
 pub const ICON_WARN: &str = icon::WARN;
 

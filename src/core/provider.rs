@@ -14,13 +14,12 @@ pub type StreamResponse = (Message, Usage);
 pub type ImageResolver = dyn Fn(&str) -> String + Send + Sync;
 
 /// An LLM provider that streams responses as Events. Object-safe.
+#[allow(dead_code)] // Trait methods implemented by all providers but not called via dyn dispatch
 pub trait Provider: Send + Sync {
     /// Provider display name (e.g. "claude", "openai").
-    #[allow(dead_code)]
     fn name(&self) -> &str;
 
     /// Current thinking level.
-    #[allow(dead_code)]
     fn thinking(&self) -> ThinkingLevel;
 
     /// Set thinking level.

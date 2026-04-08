@@ -23,10 +23,6 @@ pub enum AgentMode {
 }
 
 impl AgentMode {
-    /// All modes in cycle order.
-    #[allow(dead_code)]
-    pub const ALL: &[AgentMode] = &[Self::Rush, Self::Smart, Self::Deep];
-
     /// Cycle to next mode.
     pub fn next(self) -> Self {
         match self {

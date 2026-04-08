@@ -96,6 +96,11 @@ impl StatusBar {
         self.usage.cache_write = 0;
     }
 
+    /// Current cache values for fallback when provider omits them.
+    pub fn cache_values(&self) -> (u64, u64) {
+        (self.usage.cache_read, self.usage.cache_write)
+    }
+
     /// Set ready or thinking state.
     pub fn set_state(&mut self, state: StatusState) {
         self.state = state;

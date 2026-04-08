@@ -17,8 +17,6 @@ pub enum Block {
     Gap,
     GapLabel(String),
     Info(String),
-    #[allow(dead_code)]
-    Success(String),
     Error(String),
     Warn(String),
     User(Vec<ContentBlock>),
@@ -206,7 +204,6 @@ impl Block {
             Block::Gap
             | Block::GapLabel(_)
             | Block::Info(_)
-            | Block::Success(_)
             | Block::Error(_)
             | Block::Warn(_)
             | Block::User(_) => Snapshot::Immutable,

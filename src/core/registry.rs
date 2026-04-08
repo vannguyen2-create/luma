@@ -38,7 +38,7 @@ impl Registry {
     }
 
     /// Check if a server capability is declared.
-    #[allow(dead_code)]
+    #[cfg(test)]
     pub fn has_capability(&self, name: &str) -> bool {
         self.server_capabilities.iter().any(|c| c == name)
     }
@@ -53,12 +53,12 @@ impl Registry {
         self.tools.values().map(|t| t.schema()).collect()
     }
 
-    #[allow(dead_code)]
+    #[cfg(test)]
     pub fn len(&self) -> usize {
         self.tools.len()
     }
 
-    #[allow(dead_code)]
+    #[cfg(test)]
     pub fn is_empty(&self) -> bool {
         self.tools.is_empty()
     }

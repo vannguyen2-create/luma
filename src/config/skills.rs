@@ -29,12 +29,6 @@ pub fn discover() -> Vec<Skill> {
     skills
 }
 
-/// Load full SKILL.md content for activation.
-#[allow(dead_code)]
-pub fn load_instructions(skill: &Skill) -> Option<String> {
-    fs::read_to_string(&skill.path).ok()
-}
-
 /// Build catalog XML for system prompt injection.
 pub fn build_catalog(skills: &[Skill]) -> String {
     if skills.is_empty() {

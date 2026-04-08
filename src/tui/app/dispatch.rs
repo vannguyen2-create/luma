@@ -141,10 +141,11 @@ impl super::App {
                         usage.cache_write.unwrap_or(0),
                     );
                 }
-                let total = usage.input_tokens
-                    + usage.cache_read.unwrap_or(0)
-                    + usage.cache_write.unwrap_or(0)
-                    + usage.output_tokens;
+                // Use reported cache values, or fall back to last known from status bar.
+                let (cr, cw) = self.ui.status.cache_values();
+                let cache_read = usage.cache_read.unwrap_or(cr);
+                let cache_write = usage.cache_write.unwrap_or(cw);
+                let total = usage.input_tokens + cache_read + cache_write + usage.output_tokens;
                 let ctx_window = self
                     .config
                     .model
