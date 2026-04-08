@@ -40,7 +40,11 @@ impl super::PromptState {
                     (self.comp.dropdown_idx + 1).min(count.saturating_sub(1));
                 Some(PromptAction::Redraw)
             }
-            KeyCode::Tab | KeyCode::Enter => {
+            KeyCode::Tab => {
+                self.tab_fill_dropdown();
+                Some(PromptAction::Redraw)
+            }
+            KeyCode::Enter => {
                 self.accept_dropdown();
                 Some(PromptAction::Redraw)
             }

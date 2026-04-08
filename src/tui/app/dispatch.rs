@@ -214,6 +214,7 @@ impl super::App {
         if key.code == KeyCode::Tab
             && key.modifiers.is_empty()
             && self.agent.state == RunState::Idle
+            && !self.ui.prompt.has_dropdown()
         {
             self.quick_cycle_mode();
             return Action::Render;

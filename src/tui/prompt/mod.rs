@@ -61,7 +61,8 @@ impl PromptState {
 
     // ── Dropdown helpers ──
 
-    pub(super) fn has_dropdown(&self) -> bool {
+    /// Whether the autocomplete dropdown is currently visible.
+    pub fn has_dropdown(&self) -> bool {
         if let Some(q) = self.at_file_query() {
             return !self.comp.file_matches(&q).is_empty();
         }
@@ -88,6 +89,7 @@ impl PromptState {
         0
     }
 
+    /// Accept the currently selected dropdown item (Enter).
     pub(super) fn accept_dropdown(&mut self) {
         if let Some(query) = self.at_file_query() {
             let matches = self.comp.file_matches(&query);
@@ -111,6 +113,31 @@ impl PromptState {
             }
         }
         self.comp.dropdown_idx = 0;
+    }
+
+    /// Tab-complete: fill the highlighted item into buffer without closing dropdown.
+    pub(super) fn tab_fill_dropdown(&mut self) {
+        if let Some(query) = self.at_file_query() {
+            let matches = self.comp.file_matches(&query);
+            if let Some(path) = matches.get(self.comp.dropdown_idx) {
+                let text = self.buf.text();
+                let gpos = self.buf.text_pos();
+                let before: String = text.chars().take(gpos).collect();
+                if let Some(at_pos) = before.rfind('@') {
+                    let after: String = text.chars().skip(gpos).collect();
+                    let new = format!("{}@{}{}", &before[..at_pos], path, after);
+                    let new_pos =
+                        before[..at_pos].chars().count() + 1 + path.chars().count();
+                    self.buf.set_text(&new);
+                    self.buf.pos = new_pos;
+                }
+            }
+        } else if self.buf.is_command() {
+            let matches = self.get_matches();
+            if let Some(cmd) = matches.get(self.comp.dropdown_idx) {
+                self.buf.set_text(&format!("/{}", cmd.name));
+            }
+        }
     }
 
     // ── Private ──
@@ -368,5 +395,39 @@ mod tests {
         p.add_command("new", "new thread");
         type_str(&mut p, "/new");
         assert!(!p.has_dropdown());
+    }
+
+    #[test]
+    fn tab_fills_highlighted_item() {
+        let mut p = PromptState::new();
+        p.add_command("model", "switch model");
+        p.add_command("new", "new thread");
+        type_str(&mut p, "/");
+        // Tab fills first item text, dropdown stays open for further navigation
+        p.handle_key(&key(KeyCode::Tab));
+        assert_eq!(p.buf.text(), "/model");
+    }
+
+    #[test]
+    fn tab_fills_navigated_item() {
+        let mut p = PromptState::new();
+        p.add_command("model", "switch model");
+        p.add_command("new", "new thread");
+        type_str(&mut p, "/");
+        p.handle_key(&key(KeyCode::Down));
+        p.handle_key(&key(KeyCode::Tab));
+        assert_eq!(p.buf.text(), "/new");
+    }
+
+    #[test]
+    fn tab_does_not_reset_dropdown_idx() {
+        let mut p = PromptState::new();
+        p.add_command("model", "switch model");
+        p.add_command("new", "new thread");
+        type_str(&mut p, "/");
+        p.handle_key(&key(KeyCode::Down));
+        p.handle_key(&key(KeyCode::Tab));
+        // dropdown_idx preserved — Tab only fills, does not close
+        assert_eq!(p.comp.dropdown_idx, 1);
     }
 }
