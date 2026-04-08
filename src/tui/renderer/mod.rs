@@ -17,12 +17,6 @@ pub struct Region {
 }
 
 impl Region {
-    /// Content area start column (1-indexed terminal position).
-    #[cfg(test)]
-    pub fn content_col(&self) -> u16 {
-        self.col + self.padding.left
-    }
-
     /// Content area width.
     pub fn content_width(&self) -> u16 {
         self.width
@@ -33,12 +27,6 @@ impl Region {
     pub fn content_height(&self) -> u16 {
         self.height
             .saturating_sub(self.padding.top + self.padding.bottom)
-    }
-
-    /// Content area start row (1-indexed terminal position).
-    #[cfg(test)]
-    pub fn content_row(&self) -> u16 {
-        self.row + self.padding.top
     }
 }
 
@@ -338,7 +326,6 @@ mod tests {
     #[test]
     fn region_content_area() {
         let r = test_region();
-        assert_eq!(r.content_col(), 5);
         assert_eq!(r.content_width(), 26);
         assert_eq!(r.content_height(), 5);
     }

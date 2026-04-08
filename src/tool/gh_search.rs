@@ -122,7 +122,14 @@ async fn run_gh_search(query: &str, repo: &str, limit: u64) -> Result<String> {
             "path,repository,url,sha",
         ])
         .output()
-        .await?;
+        .await
+        .map_err(|e| {
+            if e.kind() == std::io::ErrorKind::NotFound {
+                anyhow::anyhow!("gh CLI not found. Install from https://cli.github.com/")
+            } else {
+                e.into()
+            }
+        })?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
