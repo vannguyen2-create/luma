@@ -145,8 +145,7 @@ impl super::App {
         self.render_history(&session.messages, &session.turn_durations);
 
         let u = &session.usage;
-        self.ui.status.reset_cache();
-        self.ui.status.add_cache(u.cache_read, u.cache_write);
+        self.ui.status.set_cache(u.cache_read, u.cache_write);
         let total = if u.input_tokens + u.output_tokens + u.cache_read + u.cache_write > 0 {
             u.input_tokens + u.cache_read + u.cache_write + u.output_tokens
         } else {

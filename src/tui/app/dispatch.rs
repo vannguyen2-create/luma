@@ -133,10 +133,14 @@ impl super::App {
                 Action::Render
             }
             Event::Usage(usage) => {
-                self.ui.status.add_cache(
-                    usage.cache_read.unwrap_or(0),
-                    usage.cache_write.unwrap_or(0),
-                );
+                // Only update cache display when values are present (message_start).
+                // message_delta sends None to avoid overwriting.
+                if usage.cache_read.is_some() || usage.cache_write.is_some() {
+                    self.ui.status.set_cache(
+                        usage.cache_read.unwrap_or(0),
+                        usage.cache_write.unwrap_or(0),
+                    );
+                }
                 let total = usage.input_tokens
                     + usage.cache_read.unwrap_or(0)
                     + usage.cache_write.unwrap_or(0)

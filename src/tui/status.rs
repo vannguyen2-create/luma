@@ -84,10 +84,10 @@ impl StatusBar {
         self.usage.context_pct = pct.min(100);
     }
 
-    /// Accumulate cache usage from a provider response.
-    pub fn add_cache(&mut self, read: u64, write: u64) {
-        self.usage.cache_read += read;
-        self.usage.cache_write += write;
+    /// Set cache usage from the latest provider response (replaces previous).
+    pub fn set_cache(&mut self, read: u64, write: u64) {
+        self.usage.cache_read = read;
+        self.usage.cache_write = write;
     }
 
     /// Reset cache counters (new session).
@@ -282,7 +282,7 @@ mod tests {
     #[test]
     fn hint_line_cache_display() {
         let mut sb = StatusBar::new();
-        sb.add_cache(1200, 0);
+        sb.set_cache(1200, 0);
         let l = sb.hint_line(80);
         let text: String = l.spans.iter().map(|s| s.text.as_str()).collect();
         assert!(text.contains("cache ⚡1.2K"));
@@ -291,7 +291,7 @@ mod tests {
     #[test]
     fn hint_line_cache_read_and_write() {
         let mut sb = StatusBar::new();
-        sb.add_cache(5000, 2000);
+        sb.set_cache(5000, 2000);
         let l = sb.hint_line(80);
         let text: String = l.spans.iter().map(|s| s.text.as_str()).collect();
         assert!(text.contains("cache ⚡5.0K ↑2.0K"));
@@ -300,7 +300,7 @@ mod tests {
     #[test]
     fn cache_reset() {
         let mut sb = StatusBar::new();
-        sb.add_cache(1000, 500);
+        sb.set_cache(1000, 500);
         sb.reset_cache();
         let l = sb.hint_line(80);
         let text: String = l.spans.iter().map(|s| s.text.as_str()).collect();

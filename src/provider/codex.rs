@@ -221,8 +221,11 @@ impl Provider for CodexProvider {
                             let cached = u.get("input_tokens_details")
                                 .and_then(|d| d.get("cached_tokens"))
                                 .and_then(|v| v.as_u64());
+                            let input = u.get("input_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
+                            // Codex input_tokens includes cached — subtract to match Claude semantics
+                            let non_cached = input.saturating_sub(cached.unwrap_or(0));
                             let u_data = Usage {
-                                input_tokens: u.get("input_tokens").and_then(|v| v.as_u64()).unwrap_or(0),
+                                input_tokens: non_cached,
                                 output_tokens: u.get("output_tokens").and_then(|v| v.as_u64()).unwrap_or(0),
                                 cache_read: cached,
                                 cache_write: None,

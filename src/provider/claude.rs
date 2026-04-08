@@ -267,7 +267,13 @@ impl Provider for ClaudeProvider {
                     && let Some(out) = u.get("output_tokens").and_then(|v| v.as_u64())
                 {
                     usage_ref.output_tokens = out;
-                    let _ = tx_ref.try_send(Event::Usage(usage_ref.clone()));
+                    // Send without cache values — they were already reported in message_start
+                    let _ = tx_ref.try_send(Event::Usage(Usage {
+                        input_tokens: usage_ref.input_tokens,
+                        output_tokens: out,
+                        cache_read: None,
+                        cache_write: None,
+                    }));
                 }
             },
         ).await?;
