@@ -1,69 +1,64 @@
 # Roadmap
 
-Current state: 15K lines Rust, 287 tests, 3 providers, 9 tools.
+Current: ~12K lines Rust, 290 tests, 3 providers, 9 tools. Cross-platform (macOS, Linux, Windows).
 
 ## v0.2 — Done
 
-- [x] Tool diff colors + syntax highlighting (language-aware from file path)
-- [x] Wire name removal — tools carry API-native names directly
-- [x] Prompt templates extracted to files (`src/config/prompt/`)
-- [x] Tool improvements: BufReader + binary detection (Read), deadline timeout + head/tail truncation (Bash), skip unchanged (Write), curly-quote normalization (Edit), `ignore` crate (Glob/Grep)
-- [x] Web search — capability-based server tools + client fallback (Exa/Tavily/SearXNG)
-- [x] Non-blocking input thread (try_send)
-- [x] Lazy block rendering (defer to visible window)
-- [x] Session resume preserves original ID
-- [x] Save on error/abort for crash recovery
-- [x] Auto-resume last session on app start
-- [x] apply_patch @@ context hints for fuzzy scope matching
+- [x] Tool diff colors + syntax highlighting
+- [x] Wire name removal — tools carry API-native names
+- [x] Prompt templates (`src/config/prompt/`)
+- [x] Tool improvements: BufReader (Read), deadline timeout (Bash), skip unchanged (Write), curly-quote (Edit), ignore crate (Glob/Grep)
+- [x] Web search — server tools + client fallback
+- [x] Non-blocking input, lazy block rendering
+- [x] Session resume, save on error/abort, auto-resume
 
-## v0.3 — Context & Multimodal
+## v0.3 — Architecture + Multimodal — Done
 
-- [x] **Multimodal Message type** — `content: String` → `content: Vec<ContentBlock>` with `Text(String)` and `Image { media_type, id }`. Backward-compatible session deserialization via custom serde.
-- [x] **@file mention** — type `@` in prompt → fuzzy autocomplete file paths (ignore-aware) → inject file content into message context. Highlight `@path` in peach. Tab ghost completion.
-- [x] **Image attach** — clipboard paste (Alt+V) → save to session assets → multimodal message. Provider serialization per format (Anthropic base64 source, OpenAI image_url data URI).
-- [ ] URL highlighting in markdown text (bare https:// links colored)
-- [ ] Session management: `/delete`, `/rename`, `/export` commands
-- [ ] `Block::Success` usage — show success messages for session save, compact, reset
+- [x] **TUI architecture redesign** — Document (model) + Layout (render cache) + ViewState (orchestrator). Unidirectional data flow, pull-based dirty detection via `Block::snapshot()`
+- [x] **Block render pipeline** — `block/` module: mod, render, text, tool, chrome, diff. TextCache owned by Layout via `RenderState`. Read-only `&[Block]` rendering
+- [x] **Screen architecture** — `Screen::Welcome { lines }` / `Screen::Chat`. Data on variant, Rust drops on transition. No `has_logo` flag
+- [x] **Renderer FloatingLayer** — dropdown/picker as overlay layer in flush pipeline. No content cloning. Works on all screens
+- [x] **Segment prompt buffer** — `PromptBuffer` with `Vec<Seg>`. Single source of truth for editing. Image/paste insert at cursor, backspace removes naturally
+- [x] **ContentBlock pipeline** — `Vec<ContentBlock>` from prompt → app → doc → agent → session → resume → render. No XML serialization. `ContentBlock::Paste` variant
+- [x] **Shared content rendering** — `content_lines()` for both prompt input and user chat bubble
+- [x] **Abort handling** — tool results always pushed, `[user interrupted]` system message for LLM context, active tools marked "aborted"
+- [x] **Input normalization** — `\r\n` / `\r` → `\n`. Image drag-drop with `file://` and quote stripping
+- [x] **Esc/Ctrl+C separation** — Esc = interrupt streaming, Ctrl+C = clear buffer / quit
+- [x] **Cross-platform** — Windows install (`install.ps1`), Git Bash support, CI paths-ignore for docs
+- [x] **@file mention** — fuzzy autocomplete, file content injection, `@path` highlighting
+- [x] **Image attach** — clipboard paste, drag-drop, multimodal provider serialization
+- [x] Legacy cleanup — removed custom deserializer, OutputLog, viewport, composite_overlay
 
 ## v0.4 — Performance & Polish
 
-- [ ] Incremental markdown rendering — parse only new tokens, not full block re-render
-- [ ] Diff algorithm: replace LCS O(n*m) memory with Myers O(n+m) for large files
-- [ ] Diff line count in tool output for Write/Edit ("Updated file.rs (+5 -3)")
-- [ ] Terminal resize during streaming — verify no layout corruption
-- [ ] Streaming freeze profiling — large sessions (65K+ tokens)
+- [ ] Diff algorithm: Myers O(n+m) replacing LCS O(n*m)
+- [ ] Diff line count in tool output ("Updated file.rs +5 -3")
+- [ ] URL highlighting in markdown (bare https:// links)
+- [ ] Terminal resize during streaming — verify no corruption
+- [ ] Streaming freeze profiling for large sessions (65K+ tokens)
+- [ ] Session management: `/delete`, `/rename`, `/export`
 
-## v0.5 — UX
-
-- [ ] `/command` quick invocation — user types `/commit`, `/simplify` → inject predefined prompt
-- [ ] File watcher — detect external file changes during session, warn before overwrite
-- [ ] Copy selection to clipboard (mouse or keyboard)
-- [ ] Search within output (Ctrl+F)
-- [ ] Multi-line prompt input (shift+enter)
-- [ ] Prompt history (up/down arrow cycles previous inputs)
-
-## v0.5 — Extensibility
+## v0.5 — UX & Extensibility
 
 - [ ] MCP server support — connect to external tool servers
-- [ ] Custom tools via config — define tools with shell commands + schema
-- [ ] Plugin system — load .wasm or .so tools at runtime
-- [ ] Themes — user-configurable color schemes via JSON
-- [ ] Keybind customization via config file
+- [ ] Custom tools via config — shell commands + schema
+- [ ] File watcher — detect external changes, warn before overwrite
+- [ ] Copy selection to clipboard
+- [ ] Search within output (Ctrl+F)
+- [ ] Themes — user-configurable color schemes
+- [ ] Keybind customization
 
 ## v1.0 — Production
 
-- [ ] Comprehensive error messages — every error has actionable guidance
-- [ ] Offline mode — queue messages when API unreachable, retry on reconnect
-- [ ] Rate limit handling — backoff + retry with user notification
-- [ ] Audit log — record all tool executions for compliance
-- [ ] Config validation — check config files on startup, report issues
+- [ ] Comprehensive error messages with actionable guidance
+- [ ] Rate limit handling — backoff + retry
+- [ ] Audit log — record all tool executions
+- [ ] Config validation on startup
 - [ ] man page and shell completions (bash, zsh, fish)
-- [ ] Automated release pipeline (GitHub Actions + cross-compile)
-- [ ] Benchmark suite — render performance, token throughput, memory usage
+- [ ] Benchmark suite — render, throughput, memory
 
 ## Non-goals
 
-- GUI — this is a terminal tool
-- Built-in editor — use your editor, we handle the AI
-- Multi-user — single user, single session at a time
-- Backward compatibility with Claude Code session format — clean break
+- GUI — terminal tool
+- Built-in editor — use your editor
+- Multi-user — single user, single session
