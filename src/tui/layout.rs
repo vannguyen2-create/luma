@@ -55,18 +55,32 @@ impl Layout {
         // Shrink slots if document was cleared/truncated
         if self.slots.len() > blocks.len() {
             self.slots.truncate(blocks.len());
-            self.rebuild_offsets();
-        }
-        while self.slots.len() < blocks.len() {
-            self.offsets.push(self.total);
-            self.total += 1;
-            self.slots.push(Slot {
-                lines: vec![],
-                snap: None,
-                state: RenderState::new(),
-            });
         }
 
+        // New blocks: render immediately so line counts are accurate.
+        while self.slots.len() < blocks.len() {
+            let i = self.slots.len();
+            let mut state = RenderState::new();
+            if let Some(block) = blocks.get(i) {
+                let snap = block.snapshot();
+                let rendered =
+                    render_block(block, &mut state, self.width, self.spinner_frame);
+                self.slots.push(Slot {
+                    lines: rendered,
+                    snap: Some(snap),
+                    state,
+                });
+            } else {
+                self.slots.push(Slot {
+                    lines: vec![],
+                    snap: None,
+                    state,
+                });
+            }
+        }
+        self.rebuild_offsets();
+
+        // Update existing blocks in visible range.
         let visible_end = scroll_offset + self.height * 2;
         let vis_start = if self.slots.is_empty() {
             0
