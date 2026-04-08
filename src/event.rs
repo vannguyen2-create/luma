@@ -50,6 +50,9 @@ pub enum Event {
     AgentDone,
     AgentError(String),
 
+    /// Async clipboard image result — None means no image found.
+    ClipboardImage(Option<(String, Vec<u8>)>),
+
     Tick,
 }
 

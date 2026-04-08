@@ -18,6 +18,10 @@ impl super::App {
                     self.handle_resize(w, h);
                     Action::Render
                 }
+                Event::ClipboardImage(result) => {
+                    self.on_clipboard_image(result);
+                    Action::Render
+                }
                 Event::Tick => {
                     self.ui.status.tick();
                     Action::Render
@@ -43,6 +47,10 @@ impl super::App {
                 Action::Render
             }
             Event::Term(_) => Action::Continue,
+            Event::ClipboardImage(result) => {
+                self.on_clipboard_image(result);
+                Action::Render
+            }
             Event::Tick => {
                 self.ui.status.tick();
                 if !self.screen.is_chat() {
@@ -225,6 +233,15 @@ impl super::App {
             return Action::Render;
         }
 
+        // Ctrl+V: try clipboard image first (async), text fallback via bracketed paste
+        if key.code == KeyCode::Char('v')
+            && key.modifiers.contains(KeyModifiers::CONTROL)
+            && !self.ui.picker.is_active
+        {
+            self.paste_clipboard_image();
+            return Action::Render;
+        }
+
         match self.ui.prompt.handle_key(&key) {
             PromptAction::None => Action::Continue,
             PromptAction::Redraw => Action::Render,
@@ -236,15 +253,16 @@ impl super::App {
         }
     }
 
-    /// Handle bracketed paste — detect image vs text, route accordingly.
+    /// Handle bracketed paste — detect image path vs text.
     pub(super) fn on_paste(&mut self, text: String) -> Action {
         crate::dbg_log!("paste: {}B", text.len());
         if text.is_empty() {
-            self.paste_clipboard_image();
-        } else if let Some(path) = extract_image_path(&text) {
+            return Action::Continue;
+        }
+        if let Some(path) = extract_image_path(&text) {
             self.paste_image_file(&path);
-        } else {
-            self.ui.prompt.handle_paste(text);
+        } else if self.ui.prompt.handle_paste(text).is_none() {
+            self.doc.warn("paste too large (>1 MB) — use a file reference instead");
         }
         Action::Render
     }

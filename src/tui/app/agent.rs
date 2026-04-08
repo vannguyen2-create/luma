@@ -65,13 +65,29 @@ impl super::App {
         }
     }
 
+    /// Start async clipboard image read — result arrives via ClipboardImage event.
     pub(super) fn paste_clipboard_image(&mut self) {
-        let Some(data) = read_clipboard_image() else {
-            self.doc.info("no image in clipboard");
+        if is_ssh_session() {
+            self.doc
+                .info("image paste not supported over SSH — use a file path instead");
             return;
-        };
-        let (media_type, _) = detect_image_format(&data);
-        self.ui.prompt.attach_image(media_type.to_owned(), data);
+        }
+        let Some(tx) = self.tx.clone() else { return };
+        tokio::task::spawn_blocking(move || {
+            let result = read_clipboard_image().map(|data| {
+                let (media_type, _) = detect_image_format(&data);
+                (media_type.to_owned(), data)
+            });
+            let _ = tx.try_send(crate::event::Event::ClipboardImage(result));
+        });
+    }
+
+    /// Handle async clipboard image result.
+    pub(super) fn on_clipboard_image(&mut self, result: Option<(String, Vec<u8>)>) {
+        match result {
+            Some((media_type, data)) => self.ui.prompt.attach_image(media_type, data),
+            None => self.doc.info("no image in clipboard"),
+        }
     }
 
     pub(super) fn paste_image_file(&mut self, path: &str) {
@@ -179,7 +195,7 @@ impl super::App {
 
 #[cfg(target_os = "macos")]
 fn read_clipboard_image() -> Option<Vec<u8>> {
-    let tmp = std::env::temp_dir().join("luma_clipboard.png");
+    let tmp = std::env::temp_dir().join(format!("luma_clipboard_{}.png", std::process::id()));
     let script = format!(
         r#"set theFile to POSIX file "{}"
 try
@@ -212,9 +228,53 @@ end try"#,
     Some(data)
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(target_os = "windows")]
 fn read_clipboard_image() -> Option<Vec<u8>> {
-    None
+    let tmp = std::env::temp_dir().join(format!("luma_clipboard_{}.png", std::process::id()));
+    let script = format!(
+        r#"$img = Get-Clipboard -Format Image
+if ($img -eq $null) {{ exit 1 }}
+$img.Save('{}', [System.Drawing.Imaging.ImageFormat]::Png)"#,
+        tmp.display()
+    );
+    let output = std::process::Command::new("powershell")
+        .args(["-NoProfile", "-NonInteractive", "-Command", &script])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let data = std::fs::read(&tmp).ok()?;
+    let _ = std::fs::remove_file(&tmp);
+    if data.is_empty() {
+        return None;
+    }
+    Some(data)
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
+fn read_clipboard_image() -> Option<Vec<u8>> {
+    let is_wayland = std::env::var("WAYLAND_DISPLAY").is_ok();
+    let output = if is_wayland {
+        std::process::Command::new("wl-paste")
+            .args(["--type", "image/png"])
+            .output()
+            .ok()?
+    } else {
+        std::process::Command::new("xclip")
+            .args(["-selection", "clipboard", "-t", "image/png", "-o"])
+            .output()
+            .ok()?
+    };
+    if !output.status.success() || output.stdout.is_empty() {
+        return None;
+    }
+    Some(output.stdout)
+}
+
+/// Detect if running inside an SSH session.
+fn is_ssh_session() -> bool {
+    std::env::var("SSH_CONNECTION").is_ok() || std::env::var("SSH_TTY").is_ok()
 }
 
 fn detect_image_format(data: &[u8]) -> (&'static str, &'static str) {

@@ -3,6 +3,7 @@ use super::PromptAction;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 const PASTE_INLINE_THRESHOLD: usize = 5;
+const PASTE_MAX_BYTES: usize = 1_048_576; // 1 MB
 
 impl super::PromptState {
     /// Handle a key event.
@@ -15,8 +16,11 @@ impl super::PromptState {
         self.handle_normal_key(key)
     }
 
-    /// Handle a bracketed paste of text.
-    pub fn handle_paste(&mut self, text: String) -> PromptAction {
+    /// Handle a bracketed paste of text. Returns None if paste exceeds size limit.
+    pub fn handle_paste(&mut self, text: String) -> Option<PromptAction> {
+        if text.len() > PASTE_MAX_BYTES {
+            return None;
+        }
         let normalized = normalize_newlines(&text);
         let line_count = count_lines(&normalized);
         if line_count < PASTE_INLINE_THRESHOLD {
@@ -25,7 +29,7 @@ impl super::PromptState {
         } else {
             self.buf.attach_paste(normalized);
         }
-        PromptAction::Redraw
+        Some(PromptAction::Redraw)
     }
 
     fn handle_dropdown_key(&mut self, key: &KeyEvent) -> Option<PromptAction> {

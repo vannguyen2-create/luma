@@ -334,6 +334,14 @@ mod tests {
     }
 
     #[test]
+    fn paste_too_large_rejected() {
+        let mut p = PromptState::new();
+        let huge = "x".repeat(2_000_000);
+        assert!(p.handle_paste(huge).is_none());
+        assert!(p.buf.is_empty());
+    }
+
+    #[test]
     fn image_inline_at_cursor() {
         use crate::core::types::ContentBlock;
         let mut p = PromptState::new();
