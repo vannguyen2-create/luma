@@ -36,8 +36,7 @@ impl super::PromptState {
             }
             KeyCode::Down => {
                 let count = self.dropdown_count();
-                self.comp.dropdown_idx =
-                    (self.comp.dropdown_idx + 1).min(count.saturating_sub(1));
+                self.comp.dropdown_idx = (self.comp.dropdown_idx + 1).min(count.saturating_sub(1));
                 Some(PromptAction::Redraw)
             }
             KeyCode::Tab => {
@@ -183,7 +182,11 @@ fn normalize_newlines(s: &str) -> String {
 }
 
 fn count_lines(s: &str) -> usize {
-    if s.is_empty() { 0 } else { s.split('\n').count() }
+    if s.is_empty() {
+        0
+    } else {
+        s.split('\n').count()
+    }
 }
 
 #[cfg(test)]

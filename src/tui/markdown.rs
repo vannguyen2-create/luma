@@ -11,7 +11,7 @@ pub use table::{is_table_line, render_table};
 
 use crate::tui::text::{Line, Span};
 use crate::tui::theme::palette;
-use smallvec::{smallvec, SmallVec};
+use smallvec::{SmallVec, smallvec};
 
 /// Block-level parser state.
 #[derive(Debug, Clone)]

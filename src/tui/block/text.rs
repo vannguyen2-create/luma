@@ -1,6 +1,6 @@
+use super::TextBlock;
 /// TextCache — incremental markdown render cache for TextBlock.
 use super::render::RenderState;
-use super::TextBlock;
 use crate::tui::markdown::BlockState;
 use crate::tui::markdown::{is_table_line, parse_inline_streaming, parse_line, render_table};
 use crate::tui::text::Line;

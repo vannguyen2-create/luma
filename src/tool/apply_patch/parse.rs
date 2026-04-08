@@ -4,9 +4,18 @@ use std::path::PathBuf;
 
 #[derive(Debug, Clone)]
 pub enum Hunk {
-    Add { path: PathBuf, contents: String },
-    Delete { path: PathBuf },
-    Update { path: PathBuf, move_to: Option<PathBuf>, chunks: Vec<Chunk> },
+    Add {
+        path: PathBuf,
+        contents: String,
+    },
+    Delete {
+        path: PathBuf,
+    },
+    Update {
+        path: PathBuf,
+        move_to: Option<PathBuf>,
+        chunks: Vec<Chunk>,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -22,7 +31,9 @@ pub struct Chunk {
 /// Parse a patch string into a list of Hunks.
 pub fn parse_patch(patch: &str) -> Result<Vec<Hunk>> {
     let lines: Vec<&str> = patch.trim().lines().collect();
-    if lines.is_empty() { anyhow::bail!("Empty patch"); }
+    if lines.is_empty() {
+        anyhow::bail!("Empty patch");
+    }
     let lines = strip_heredoc(&lines);
 
     if lines.first().is_none_or(|l| l.trim() != "*** Begin Patch") {
@@ -47,9 +58,14 @@ pub fn parse_patch(patch: &str) -> Result<Vec<Hunk>> {
                 contents.push('\n');
                 i += 1;
             }
-            hunks.push(Hunk::Add { path: PathBuf::from(path), contents });
+            hunks.push(Hunk::Add {
+                path: PathBuf::from(path),
+                contents,
+            });
         } else if let Some(path) = line.strip_prefix("*** Delete File: ") {
-            hunks.push(Hunk::Delete { path: PathBuf::from(path) });
+            hunks.push(Hunk::Delete {
+                path: PathBuf::from(path),
+            });
             i += 1;
         } else if let Some(path) = line.strip_prefix("*** Update File: ") {
             i += 1;
@@ -64,7 +80,11 @@ pub fn parse_patch(patch: &str) -> Result<Vec<Hunk>> {
             if chunks.is_empty() {
                 anyhow::bail!("Update hunk for '{}' has no changes", path);
             }
-            hunks.push(Hunk::Update { path: PathBuf::from(path), move_to, chunks });
+            hunks.push(Hunk::Update {
+                path: PathBuf::from(path),
+                move_to,
+                chunks,
+            });
         } else if line.is_empty() {
             i += 1;
         } else {
@@ -78,7 +98,9 @@ fn parse_chunks(inner: &[&str], i: &mut usize) -> Result<Vec<Chunk>> {
     let mut chunks = Vec::new();
     while *i < inner.len() {
         let cl = inner[*i].trim();
-        if cl.starts_with("*** ") { break; }
+        if cl.starts_with("*** ") {
+            break;
+        }
 
         let context = if cl == "@@" {
             *i += 1;
@@ -86,7 +108,8 @@ fn parse_chunks(inner: &[&str], i: &mut usize) -> Result<Vec<Chunk>> {
         } else if let Some(ctx) = cl.strip_prefix("@@ ") {
             *i += 1;
             Some(ctx.to_owned())
-        } else if cl.starts_with(' ') || cl.starts_with('+') || cl.starts_with('-') || cl.is_empty() {
+        } else if cl.starts_with(' ') || cl.starts_with('+') || cl.starts_with('-') || cl.is_empty()
+        {
             None
         } else {
             break;
@@ -112,7 +135,10 @@ fn parse_chunks(inner: &[&str], i: &mut usize) -> Result<Vec<Chunk>> {
                 new_lines.push(String::new());
             } else {
                 match dl.as_bytes()[0] {
-                    b' ' => { old_lines.push(dl[1..].to_owned()); new_lines.push(dl[1..].to_owned()); }
+                    b' ' => {
+                        old_lines.push(dl[1..].to_owned());
+                        new_lines.push(dl[1..].to_owned());
+                    }
                     b'-' => old_lines.push(dl[1..].to_owned()),
                     b'+' => new_lines.push(dl[1..].to_owned()),
                     _ => break,
@@ -122,7 +148,12 @@ fn parse_chunks(inner: &[&str], i: &mut usize) -> Result<Vec<Chunk>> {
         }
 
         if !old_lines.is_empty() || !new_lines.is_empty() {
-            chunks.push(Chunk { context, old_lines, new_lines, is_eof });
+            chunks.push(Chunk {
+                context,
+                old_lines,
+                new_lines,
+                is_eof,
+            });
         }
     }
     Ok(chunks)
@@ -143,23 +174,38 @@ fn strip_heredoc<'a>(lines: &'a [&'a str]) -> Vec<&'a str> {
 /// Returns the line index so `seek_sequence` can search from there.
 pub fn seek_context(lines: &[String], context: &str, start: usize) -> Option<usize> {
     let ctx = context.trim();
-    if ctx.is_empty() { return None; }
+    if ctx.is_empty() {
+        return None;
+    }
     // Exact substring match
     for (i, line) in lines.iter().enumerate().skip(start) {
-        if line.contains(ctx) { return Some(i); }
+        if line.contains(ctx) {
+            return Some(i);
+        }
     }
     // Normalized match (unicode, whitespace)
     let norm_ctx = normalise(ctx);
     for (i, line) in lines.iter().enumerate().skip(start) {
-        if normalise(line).contains(&norm_ctx) { return Some(i); }
+        if normalise(line).contains(&norm_ctx) {
+            return Some(i);
+        }
     }
     None
 }
 
 /// Find pattern in lines starting from start, with fuzzy fallbacks.
-pub fn seek_sequence(lines: &[String], pattern: &[String], start: usize, eof: bool) -> Option<usize> {
-    if pattern.is_empty() { return Some(start); }
-    if pattern.len() > lines.len() { return None; }
+pub fn seek_sequence(
+    lines: &[String],
+    pattern: &[String],
+    start: usize,
+    eof: bool,
+) -> Option<usize> {
+    if pattern.is_empty() {
+        return Some(start);
+    }
+    if pattern.len() > lines.len() {
+        return None;
+    }
 
     let search_start = if eof && lines.len() >= pattern.len() {
         lines.len() - pattern.len()
@@ -169,33 +215,50 @@ pub fn seek_sequence(lines: &[String], pattern: &[String], start: usize, eof: bo
 
     // Exact match
     for i in search_start..=lines.len().saturating_sub(pattern.len()) {
-        if lines[i..i + pattern.len()] == *pattern { return Some(i); }
+        if lines[i..i + pattern.len()] == *pattern {
+            return Some(i);
+        }
     }
     // Trim trailing whitespace
     for i in search_start..=lines.len().saturating_sub(pattern.len()) {
-        if pattern.iter().enumerate().all(|(j, p)| lines[i + j].trim_end() == p.trim_end()) {
+        if pattern
+            .iter()
+            .enumerate()
+            .all(|(j, p)| lines[i + j].trim_end() == p.trim_end())
+        {
             return Some(i);
         }
     }
     // Trim both sides
     for i in search_start..=lines.len().saturating_sub(pattern.len()) {
-        if pattern.iter().enumerate().all(|(j, p)| lines[i + j].trim() == p.trim()) {
+        if pattern
+            .iter()
+            .enumerate()
+            .all(|(j, p)| lines[i + j].trim() == p.trim())
+        {
             return Some(i);
         }
     }
     // Normalize unicode
-    (search_start..=lines.len().saturating_sub(pattern.len()))
-        .find(|&i| pattern.iter().enumerate().all(|(j, p)| normalise(&lines[i + j]) == normalise(p)))
+    (search_start..=lines.len().saturating_sub(pattern.len())).find(|&i| {
+        pattern
+            .iter()
+            .enumerate()
+            .all(|(j, p)| normalise(&lines[i + j]) == normalise(p))
+    })
 }
 
 fn normalise(s: &str) -> String {
-    s.trim().chars().map(|c| match c {
-        '\u{2010}'..='\u{2015}' | '\u{2212}' => '-',
-        '\u{2018}' | '\u{2019}' | '\u{201A}' | '\u{201B}' => '\'',
-        '\u{201C}' | '\u{201D}' | '\u{201E}' | '\u{201F}' => '"',
-        '\u{00A0}' | '\u{2002}'..='\u{200A}' | '\u{202F}' | '\u{205F}' | '\u{3000}' => ' ',
-        other => other,
-    }).collect()
+    s.trim()
+        .chars()
+        .map(|c| match c {
+            '\u{2010}'..='\u{2015}' | '\u{2212}' => '-',
+            '\u{2018}' | '\u{2019}' | '\u{201A}' | '\u{201B}' => '\'',
+            '\u{201C}' | '\u{201D}' | '\u{201E}' | '\u{201F}' => '"',
+            '\u{00A0}' | '\u{2002}'..='\u{200A}' | '\u{202F}' | '\u{205F}' | '\u{3000}' => ' ',
+            other => other,
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -261,14 +324,20 @@ mod tests {
 
     #[test]
     fn seek_exact() {
-        let lines: Vec<String> = vec!["a", "b", "c", "d"].into_iter().map(String::from).collect();
+        let lines: Vec<String> = vec!["a", "b", "c", "d"]
+            .into_iter()
+            .map(String::from)
+            .collect();
         let pattern: Vec<String> = vec!["b", "c"].into_iter().map(String::from).collect();
         assert_eq!(seek_sequence(&lines, &pattern, 0, false), Some(1));
     }
 
     #[test]
     fn seek_trimmed() {
-        let lines: Vec<String> = vec!["a", "b  ", "c"].into_iter().map(String::from).collect();
+        let lines: Vec<String> = vec!["a", "b  ", "c"]
+            .into_iter()
+            .map(String::from)
+            .collect();
         let pattern: Vec<String> = vec!["b", "c"].into_iter().map(String::from).collect();
         assert_eq!(seek_sequence(&lines, &pattern, 0, false), Some(1));
     }
@@ -283,9 +352,17 @@ mod tests {
     #[test]
     fn seek_context_jumps_to_function() {
         let lines: Vec<String> = vec![
-            "fn first() {", "    1", "}", "",
-            "fn second() {", "    2", "}",
-        ].into_iter().map(String::from).collect();
+            "fn first() {",
+            "    1",
+            "}",
+            "",
+            "fn second() {",
+            "    2",
+            "}",
+        ]
+        .into_iter()
+        .map(String::from)
+        .collect();
         assert_eq!(seek_context(&lines, "fn second()", 0), Some(4));
         assert_eq!(seek_context(&lines, "fn first()", 0), Some(0));
         assert_eq!(seek_context(&lines, "fn nonexistent()", 0), None);

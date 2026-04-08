@@ -1,6 +1,3 @@
-
-
-
 /// Debug log to /tmp/luma.log — enabled by LUMA_DEBUG=1.
 #[macro_export]
 macro_rules! dbg_log {
@@ -22,8 +19,8 @@ macro_rules! dbg_log {
     };
 }
 
-mod core;
 mod config;
+mod core;
 mod event;
 mod provider;
 mod tool;
@@ -41,14 +38,26 @@ async fn main() {
             println!("syncing models...");
             match config::models::sync().await {
                 Ok(count) => println!("synced {count} models"),
-                Err(e) => { eprintln!("sync failed: {e}"); std::process::exit(1); }
+                Err(e) => {
+                    eprintln!("sync failed: {e}");
+                    std::process::exit(1);
+                }
             }
         }
         Some("auth") => {
-            for provider in [config::auth::AuthProvider::Anthropic, config::auth::AuthProvider::OpenAI] {
-                let name = match provider { config::auth::AuthProvider::Anthropic => "anthropic", config::auth::AuthProvider::OpenAI => "openai" };
+            for provider in [
+                config::auth::AuthProvider::Anthropic,
+                config::auth::AuthProvider::OpenAI,
+            ] {
+                let name = match provider {
+                    config::auth::AuthProvider::Anthropic => "anthropic",
+                    config::auth::AuthProvider::OpenAI => "openai",
+                };
                 match config::auth::resolve(provider).await {
-                    Ok(auth) => println!("{name}: {} (ok)", if auth.is_oauth { "oauth" } else { "apikey" }),
+                    Ok(auth) => println!(
+                        "{name}: {} (ok)",
+                        if auth.is_oauth { "oauth" } else { "apikey" }
+                    ),
                     Err(e) => println!("{name}: {e}"),
                 }
             }
@@ -61,7 +70,9 @@ async fn main() {
         }
         Some("version" | "--version" | "-v") => println!("luma {}", env!("CARGO_PKG_VERSION")),
         Some("help" | "--help" | "-h") => {
-            println!("luma - lightweight coding agent\n\nusage:\n  luma              start TUI\n  luma sync         sync models\n  luma auth         show auth\n  luma update       update to latest\n  luma version      version");
+            println!(
+                "luma - lightweight coding agent\n\nusage:\n  luma              start TUI\n  luma sync         sync models\n  luma auth         show auth\n  luma update       update to latest\n  luma version      version"
+            );
         }
         Some(unknown) => {
             eprintln!("unknown command: {unknown}\nrun 'luma help'");
@@ -109,8 +120,11 @@ fn self_update() -> anyhow::Result<()> {
     println!("current: v{current}");
     println!("updating...");
     let status = Command::new("powershell")
-        .args(["-NoProfile", "-Command",
-            "irm https://raw.githubusercontent.com/nghyane/luma/master/install.ps1 | iex"])
+        .args([
+            "-NoProfile",
+            "-Command",
+            "irm https://raw.githubusercontent.com/nghyane/luma/master/install.ps1 | iex",
+        ])
         .status()?;
     if !status.success() {
         anyhow::bail!("install script failed");
@@ -143,14 +157,32 @@ fn build_env_context() -> String {
     ];
 
     let project_markers: &[(&str, &[(&str, &str)])] = &[
-        ("Cargo.toml",      &[("cargo", "--version"), ("rustc", "--version")]),
-        ("package.json",    &[("node", "--version"), ("npm", "--version"), ("pnpm", "--version"), ("yarn", "--version"), ("bun", "--version")]),
-        ("Dockerfile",      &[("docker", "--version")]),
+        (
+            "Cargo.toml",
+            &[("cargo", "--version"), ("rustc", "--version")],
+        ),
+        (
+            "package.json",
+            &[
+                ("node", "--version"),
+                ("npm", "--version"),
+                ("pnpm", "--version"),
+                ("yarn", "--version"),
+                ("bun", "--version"),
+            ],
+        ),
+        ("Dockerfile", &[("docker", "--version")]),
         ("docker-compose.yml", &[("docker", "--version")]),
-        ("requirements.txt",&[("python3", "--version"), ("pip3", "--version")]),
-        ("pyproject.toml",  &[("python3", "--version"), ("pip3", "--version")]),
-        ("go.mod",          &[("go", "version")]),
-        ("Makefile",        &[("make", "--version")]),
+        (
+            "requirements.txt",
+            &[("python3", "--version"), ("pip3", "--version")],
+        ),
+        (
+            "pyproject.toml",
+            &[("python3", "--version"), ("pip3", "--version")],
+        ),
+        ("go.mod", &[("go", "version")]),
+        ("Makefile", &[("make", "--version")]),
     ];
 
     let mut seen = std::collections::HashSet::new();
@@ -169,7 +201,11 @@ fn build_env_context() -> String {
         if let Ok(out) = Command::new(cmd).arg(flag).output()
             && out.status.success()
         {
-            let ver = String::from_utf8_lossy(&out.stdout).lines().next().unwrap_or(cmd).to_owned();
+            let ver = String::from_utf8_lossy(&out.stdout)
+                .lines()
+                .next()
+                .unwrap_or(cmd)
+                .to_owned();
             tools.push(format!("{cmd} ({ver})"));
         }
     }
@@ -177,8 +213,12 @@ fn build_env_context() -> String {
     // Build git line
     let git_info = if is_git {
         let mut parts = vec!["yes".to_owned()];
-        if let Some(b) = &git_branch { parts.push(format!("branch={b}")); }
-        if let Some(r) = &git_remote { parts.push(format!("remote={r}")); }
+        if let Some(b) = &git_branch {
+            parts.push(format!("branch={b}"));
+        }
+        if let Some(r) = &git_remote {
+            parts.push(format!("remote={r}"));
+        }
         parts.join(", ")
     } else {
         "no".into()
@@ -195,7 +235,8 @@ fn build_env_context() -> String {
 
     format!(
         "\n<env>\n  OS: {} {}\n  Shell: {shell}\n  CWD: {}\n  Git: {git_info}\n  Date: {date}\n  CLI: {}\n</env>",
-        std::env::consts::OS, std::env::consts::ARCH,
+        std::env::consts::OS,
+        std::env::consts::ARCH,
         cwd.display(),
         tools.join(", "),
     )
@@ -219,13 +260,21 @@ fn epoch_days_to_ymd(days: u64) -> (u64, u64, u64) {
 
 /// Run a command and check success.
 fn cmd_ok(cwd: &std::path::Path, cmd: &str, args: &[&str]) -> bool {
-    Command::new(cmd).args(args).current_dir(cwd)
-        .output().map(|o| o.status.success()).unwrap_or(false)
+    Command::new(cmd)
+        .args(args)
+        .current_dir(cwd)
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
 }
 
 /// Run a command and return trimmed stdout on success.
 fn cmd_stdout(cwd: &std::path::Path, cmd: &str, args: &[&str]) -> Option<String> {
-    Command::new(cmd).args(args).current_dir(cwd).output().ok()
+    Command::new(cmd)
+        .args(args)
+        .current_dir(cwd)
+        .output()
+        .ok()
         .filter(|o| o.status.success())
         .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_owned())
         .filter(|s| !s.is_empty())

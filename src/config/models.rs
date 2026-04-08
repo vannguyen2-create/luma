@@ -29,12 +29,20 @@ impl AgentMode {
 
     /// Cycle to next mode.
     pub fn next(self) -> Self {
-        match self { Self::Rush => Self::Smart, Self::Smart => Self::Deep, Self::Deep => Self::Rush }
+        match self {
+            Self::Rush => Self::Smart,
+            Self::Smart => Self::Deep,
+            Self::Deep => Self::Rush,
+        }
     }
 
     /// Display name.
     pub fn as_str(self) -> &'static str {
-        match self { Self::Rush => "rush", Self::Smart => "smart", Self::Deep => "deep" }
+        match self {
+            Self::Rush => "rush",
+            Self::Smart => "smart",
+            Self::Deep => "deep",
+        }
     }
 }
 
@@ -49,7 +57,9 @@ fn snapshot_path() -> PathBuf {
 }
 
 fn dirs_home() -> PathBuf {
-    std::env::var("HOME").map(PathBuf::from).unwrap_or_else(|_| PathBuf::from("/tmp"))
+    std::env::var("HOME")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| PathBuf::from("/tmp"))
 }
 
 /// Load cached models snapshot.
@@ -59,7 +69,9 @@ pub(crate) fn load_snapshot() -> Option<Snapshot> {
 }
 
 /// Whether models have been synced before.
-pub fn has_synced() -> bool { snapshot_path().exists() }
+pub fn has_synced() -> bool {
+    snapshot_path().exists()
+}
 
 /// All known models.
 pub fn all_models() -> Vec<ModelEntry> {
@@ -92,11 +104,16 @@ pub fn resolve_default(mode: AgentMode) -> Option<ModelEntry> {
     };
 
     for (keywords, source) in rules {
-        let mut matches: Vec<_> = models.iter()
-            .filter(|m| m.source == *source && keywords.iter().all(|kw| m.id.to_lowercase().contains(kw)))
+        let mut matches: Vec<_> = models
+            .iter()
+            .filter(|m| {
+                m.source == *source && keywords.iter().all(|kw| m.id.to_lowercase().contains(kw))
+            })
             .collect();
         matches.sort_by(|a, b| b.id.cmp(&a.id));
-        if let Some(m) = matches.first() { return Some((*m).clone()); }
+        if let Some(m) = matches.first() {
+            return Some((*m).clone());
+        }
     }
     None
 }
@@ -106,13 +123,22 @@ pub async fn sync() -> Result<usize> {
     let (anthropic, codex) = tokio::join!(scan_anthropic(), scan_codex());
 
     let mut models = Vec::new();
-    if let Ok(m) = anthropic { models.extend(m); }
-    if let Ok(m) = codex { models.extend(m); }
+    if let Ok(m) = anthropic {
+        models.extend(m);
+    }
+    if let Ok(m) = codex {
+        models.extend(m);
+    }
 
-    let snapshot = Snapshot { models, context_windows: HashMap::new() };
+    let snapshot = Snapshot {
+        models,
+        context_windows: HashMap::new(),
+    };
 
     let path = snapshot_path();
-    if let Some(parent) = path.parent() { fs::create_dir_all(parent)?; }
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
     fs::write(&path, serde_json::to_string_pretty(&snapshot)?)?;
 
     let count = snapshot.models.len();
@@ -122,19 +148,31 @@ pub async fn sync() -> Result<usize> {
 async fn scan_anthropic() -> Result<Vec<ModelEntry>> {
     let auth = auth::resolve(AuthProvider::Anthropic).await?;
     let client = reqwest::Client::new();
-    let res = client.get("https://api.anthropic.com/v1/models")
+    let res = client
+        .get("https://api.anthropic.com/v1/models")
         .header("Authorization", format!("Bearer {}", auth.token))
         .header("anthropic-version", "2023-06-01")
         .header("anthropic-beta", "oauth-2025-04-20")
-        .send().await?;
+        .send()
+        .await?;
 
-    if !res.status().is_success() { anyhow::bail!("Anthropic: {}", res.status()); }
+    if !res.status().is_success() {
+        anyhow::bail!("Anthropic: {}", res.status());
+    }
 
     let data: serde_json::Value = res.json().await?;
-    let models = data["data"].as_array()
-        .map(|arr| arr.iter().filter_map(|m| {
-            Some(ModelEntry { id: m["id"].as_str()?.to_owned(), source: "anthropic".into() })
-        }).collect())
+    let models = data["data"]
+        .as_array()
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|m| {
+                    Some(ModelEntry {
+                        id: m["id"].as_str()?.to_owned(),
+                        source: "anthropic".into(),
+                    })
+                })
+                .collect()
+        })
         .unwrap_or_default();
 
     Ok(models)
@@ -143,17 +181,29 @@ async fn scan_anthropic() -> Result<Vec<ModelEntry>> {
 async fn scan_codex() -> Result<Vec<ModelEntry>> {
     let auth = auth::resolve(AuthProvider::OpenAI).await?;
     let client = reqwest::Client::new();
-    let res = client.get("https://chatgpt.com/backend-api/codex/models?client_version=1.0.0")
+    let res = client
+        .get("https://chatgpt.com/backend-api/codex/models?client_version=1.0.0")
         .header("Authorization", format!("Bearer {}", auth.token))
-        .send().await?;
+        .send()
+        .await?;
 
-    if !res.status().is_success() { anyhow::bail!("Codex: {}", res.status()); }
+    if !res.status().is_success() {
+        anyhow::bail!("Codex: {}", res.status());
+    }
 
     let data: serde_json::Value = res.json().await?;
-    let models = data["models"].as_array()
-        .map(|arr| arr.iter().filter_map(|m| {
-            Some(ModelEntry { id: m["slug"].as_str()?.to_owned(), source: "codex".into() })
-        }).collect())
+    let models = data["models"]
+        .as_array()
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|m| {
+                    Some(ModelEntry {
+                        id: m["slug"].as_str()?.to_owned(),
+                        source: "codex".into(),
+                    })
+                })
+                .collect()
+        })
         .unwrap_or_default();
 
     Ok(models)
@@ -173,5 +223,4 @@ mod tests {
     fn mode_as_str() {
         assert_eq!(AgentMode::Smart.as_str(), "smart");
     }
-
 }

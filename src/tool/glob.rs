@@ -4,7 +4,7 @@
 /// Same engine as ripgrep for consistent, fast directory walking.
 use crate::core::tool::Tool;
 use crate::core::types::ToolSchema;
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 use std::path::Path;
 use std::pin::Pin;
 use tokio::sync::mpsc;
@@ -16,7 +16,9 @@ const MAX_RESULTS: usize = 200;
 pub struct GlobTool;
 
 impl Tool for GlobTool {
-    fn name(&self) -> &str { "Glob" }
+    fn name(&self) -> &str {
+        "Glob"
+    }
 
     fn schema(&self) -> ToolSchema {
         ToolSchema {
@@ -56,7 +58,10 @@ impl Tool for GlobTool {
             let root = if Path::new(path).is_absolute() {
                 path.to_owned()
             } else {
-                std::env::current_dir()?.join(path).to_string_lossy().into_owned()
+                std::env::current_dir()?
+                    .join(path)
+                    .to_string_lossy()
+                    .into_owned()
             };
 
             if !Path::new(&root).is_dir() {
@@ -75,14 +80,16 @@ impl Tool for GlobTool {
             // Walk using `ignore` crate — respects .gitignore, skips hidden,
             // handles symlinks, parallel-ready.
             let walker = ignore::WalkBuilder::new(&root)
-                .hidden(true)       // skip hidden files
-                .git_ignore(true)   // respect .gitignore
-                .git_global(true)   // respect global gitignore
-                .git_exclude(true)  // respect .git/info/exclude
+                .hidden(true) // skip hidden files
+                .git_ignore(true) // respect .gitignore
+                .git_global(true) // respect global gitignore
+                .git_exclude(true) // respect .git/info/exclude
                 .build();
 
             for entry in walker {
-                if matches.len() >= MAX_RESULTS { break; }
+                if matches.len() >= MAX_RESULTS {
+                    break;
+                }
                 let entry = match entry {
                     Ok(e) => e,
                     Err(_) => continue,
@@ -94,7 +101,8 @@ impl Tool for GlobTool {
                 let entry_path = entry.path();
                 let rel = entry_path.strip_prefix(root_path).unwrap_or(entry_path);
                 if matcher.is_match(rel) {
-                    let mtime = entry.metadata()
+                    let mtime = entry
+                        .metadata()
                         .ok()
                         .and_then(|m| m.modified().ok())
                         .unwrap_or(std::time::UNIX_EPOCH);
@@ -139,7 +147,10 @@ mod tests {
         let (tx, _rx) = mpsc::channel(64);
         let tool = GlobTool;
         let args = serde_json::json!({"pattern": "**/*.rs", "path": root.to_str().unwrap()});
-        let result = tool.execute(args, tx, CancellationToken::new()).await.unwrap();
+        let result = tool
+            .execute(args, tx, CancellationToken::new())
+            .await
+            .unwrap();
         assert!(result.contains(".rs"));
         assert!(!result.contains("readme.md"));
     }
@@ -149,7 +160,10 @@ mod tests {
         let (tx, _rx) = mpsc::channel(64);
         let tool = GlobTool;
         let args = serde_json::json!({"pattern": "**/*.nonexistent_ext"});
-        let result = tool.execute(args, tx, CancellationToken::new()).await.unwrap();
+        let result = tool
+            .execute(args, tx, CancellationToken::new())
+            .await
+            .unwrap();
         assert_eq!(result, "No files found");
     }
 
@@ -175,9 +189,18 @@ mod tests {
         let (tx, _rx) = mpsc::channel(64);
         let tool = GlobTool;
         let args = serde_json::json!({"pattern": "**/*", "path": root.to_str().unwrap()});
-        let result = tool.execute(args, tx, CancellationToken::new()).await.unwrap();
+        let result = tool
+            .execute(args, tx, CancellationToken::new())
+            .await
+            .unwrap();
 
-        assert!(result.contains("keep.rs"), "should include keep.rs: {result}");
-        assert!(!result.contains("skip.log"), "should exclude skip.log: {result}");
+        assert!(
+            result.contains("keep.rs"),
+            "should include keep.rs: {result}"
+        );
+        assert!(
+            !result.contains("skip.log"),
+            "should exclude skip.log: {result}"
+        );
     }
 }

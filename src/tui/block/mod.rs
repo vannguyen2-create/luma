@@ -6,7 +6,7 @@ mod render;
 mod text;
 mod tool;
 
-pub use render::{render_block, RenderState};
+pub use render::{RenderState, render_block};
 
 use crate::core::types::ContentBlock;
 use crate::tui::stream::StreamBuf;
@@ -173,10 +173,26 @@ impl PartialEq for Snapshot {
         match (self, other) {
             (Self::Volatile, _) | (_, Self::Volatile) => false,
             (Self::Immutable, Self::Immutable) => true,
-            (Self::Stream { committed: a, partial: b },
-             Self::Stream { committed: c, partial: d }) => a == c && b == d,
-            (Self::Tool { output_len: a, expanded: b },
-             Self::Tool { output_len: c, expanded: d }) => a == c && b == d,
+            (
+                Self::Stream {
+                    committed: a,
+                    partial: b,
+                },
+                Self::Stream {
+                    committed: c,
+                    partial: d,
+                },
+            ) => a == c && b == d,
+            (
+                Self::Tool {
+                    output_len: a,
+                    expanded: b,
+                },
+                Self::Tool {
+                    output_len: c,
+                    expanded: d,
+                },
+            ) => a == c && b == d,
             (Self::Skill { is_done: a }, Self::Skill { is_done: b }) => a == b,
             _ => false,
         }
@@ -187,9 +203,13 @@ impl Block {
     /// Snapshot for dirty detection. Layout compares old vs new.
     pub fn snapshot(&self) -> Snapshot {
         match self {
-            Block::Gap | Block::GapLabel(_)
-            | Block::Info(_) | Block::Success(_) | Block::Error(_)
-            | Block::Warn(_) | Block::User(_) => Snapshot::Immutable,
+            Block::Gap
+            | Block::GapLabel(_)
+            | Block::Info(_)
+            | Block::Success(_)
+            | Block::Error(_)
+            | Block::Warn(_)
+            | Block::User(_) => Snapshot::Immutable,
             Block::Thinking(s) => Snapshot::Stream {
                 committed: s.committed.len(),
                 partial: s.partial().len(),
@@ -203,7 +223,9 @@ impl Block {
                 expanded: tb.is_expanded,
             },
             Block::Tool(_) => Snapshot::Volatile,
-            Block::Skill(sb) => Snapshot::Skill { is_done: sb.is_done },
+            Block::Skill(sb) => Snapshot::Skill {
+                is_done: sb.is_done,
+            },
         }
     }
 }

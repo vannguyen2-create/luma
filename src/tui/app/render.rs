@@ -46,29 +46,33 @@ impl super::App {
                 }
                 Action::Continue
             }
-            MouseEventKind::Drag(MouseButton::Left) => {
-                match &self.ui.drag {
-                    Some(DragState::Scrollbar { start_row, start_offset }) if has_sb => {
-                        let start_row = *start_row;
-                        let start_offset = *start_offset;
-                        let delta = row as i32 - start_row as i32;
-                        let max_off = total.saturating_sub(visible);
-                        let thumb_h = (visible * visible / total).max(1);
-                        let track_h = visible.saturating_sub(thumb_h);
-                        if track_h > 0 {
-                            let sd = (delta as f64 / track_h as f64 * max_off as f64).round() as isize;
-                            self.view.scroll_to((start_offset as isize + sd).max(0) as usize);
-                        }
-                        Action::Render
+            MouseEventKind::Drag(MouseButton::Left) => match &self.ui.drag {
+                Some(DragState::Scrollbar {
+                    start_row,
+                    start_offset,
+                }) if has_sb => {
+                    let start_row = *start_row;
+                    let start_offset = *start_offset;
+                    let delta = row as i32 - start_row as i32;
+                    let max_off = total.saturating_sub(visible);
+                    let thumb_h = (visible * visible / total).max(1);
+                    let track_h = visible.saturating_sub(thumb_h);
+                    if track_h > 0 {
+                        let sd = (delta as f64 / track_h as f64 * max_off as f64).round() as isize;
+                        self.view
+                            .scroll_to((start_offset as isize + sd).max(0) as usize);
                     }
-                    Some(DragState::Selecting) => {
-                        self.ui.selection.update(row, col);
-                        self.ui.selection.edge_scroll(&mut self.view, r_row, r_height);
-                        Action::Render
-                    }
-                    _ => Action::Continue,
+                    Action::Render
                 }
-            }
+                Some(DragState::Selecting) => {
+                    self.ui.selection.update(row, col);
+                    self.ui
+                        .selection
+                        .edge_scroll(&mut self.view, r_row, r_height);
+                    Action::Render
+                }
+                _ => Action::Continue,
+            },
             MouseEventKind::Up(MouseButton::Left) => {
                 let was_selecting = matches!(self.ui.drag, Some(DragState::Selecting));
                 self.ui.drag = None;
@@ -95,9 +99,12 @@ impl super::App {
     pub(super) fn handle_resize(&mut self, w: u16, h: u16) {
         self.regions = super::compute_regions(w, h);
         self.renderer.set_term_size(w, h);
-        self.renderer.update_region("output", self.regions.output.clone());
-        self.renderer.update_region("status", self.regions.status.clone());
-        self.renderer.update_region("input", self.regions.input.clone());
+        self.renderer
+            .update_region("output", self.regions.output.clone());
+        self.renderer
+            .update_region("status", self.regions.status.clone());
+        self.renderer
+            .update_region("input", self.regions.input.clone());
         self.view.set_size(
             self.regions.output.content_width() as usize,
             self.regions.output.content_height() as usize,
@@ -134,7 +141,11 @@ impl super::App {
         let content_w = self.regions.output.content_width();
         let content_h = self.regions.output.content_height();
         let (total, visible, _) = self.view.scroll_info();
-        let ow = if total > visible { content_w - 1 } else { content_w };
+        let ow = if total > visible {
+            content_w - 1
+        } else {
+            content_w
+        };
         if ow != self.ui.last_output_width {
             self.view.set_size(ow as usize, content_h as usize);
             self.ui.last_output_width = ow;
@@ -224,8 +235,10 @@ impl super::App {
         if self.agent.state == RunState::PendingAbort {
             self.renderer.set_cursor(CursorState::Hidden);
         } else {
-            self.renderer
-                .set_cursor(CursorState::Visible { row: cursor_row, col: cursor_col });
+            self.renderer.set_cursor(CursorState::Visible {
+                row: cursor_row,
+                col: cursor_col,
+            });
         }
     }
 
@@ -233,14 +246,17 @@ impl super::App {
         use crate::tui::renderer::SelectionRange;
         if self.ui.selection.is_active && self.ui.selection.has_range() {
             let (mut r0, mut c0, mut r1, mut c1) = (
-                self.ui.selection.start_row, self.ui.selection.start_col,
-                self.ui.selection.end_row, self.ui.selection.end_col,
+                self.ui.selection.start_row,
+                self.ui.selection.start_col,
+                self.ui.selection.end_row,
+                self.ui.selection.end_col,
             );
             if r0 > r1 || (r0 == r1 && c0 > c1) {
                 std::mem::swap(&mut r0, &mut r1);
                 std::mem::swap(&mut c0, &mut c1);
             }
-            self.renderer.set_selection(Some(SelectionRange { r0, c0, r1, c1 }));
+            self.renderer
+                .set_selection(Some(SelectionRange { r0, c0, r1, c1 }));
         } else {
             self.renderer.set_selection(None);
         }
@@ -275,12 +291,18 @@ impl super::App {
                 cells.push(ScrollCell::Thumb);
             } else if cell_start < start_sub && cell_end > start_sub {
                 let frac = (start_sub - cell_start) as u8;
-                if frac == 0 { cells.push(ScrollCell::Thumb); }
-                else { cells.push(ScrollCell::TopEdge(frac)); }
+                if frac == 0 {
+                    cells.push(ScrollCell::Thumb);
+                } else {
+                    cells.push(ScrollCell::TopEdge(frac));
+                }
             } else {
                 let frac = (end_sub - cell_start) as u8;
-                if frac >= SUB as u8 { cells.push(ScrollCell::Thumb); }
-                else { cells.push(ScrollCell::BottomEdge(frac)); }
+                if frac >= SUB as u8 {
+                    cells.push(ScrollCell::Thumb);
+                } else {
+                    cells.push(ScrollCell::BottomEdge(frac));
+                }
             }
         }
 

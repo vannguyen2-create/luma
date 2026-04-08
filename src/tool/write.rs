@@ -1,10 +1,10 @@
 /// Write tool — write content to a file, creating parent dirs if needed.
 use crate::core::tool::Tool;
 use crate::core::types::ToolSchema;
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
+use std::future::Future;
 use std::path::PathBuf;
 use std::pin::Pin;
-use std::future::Future;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
@@ -12,7 +12,9 @@ use tokio_util::sync::CancellationToken;
 pub struct WriteTool;
 
 impl Tool for WriteTool {
-    fn name(&self) -> &str { "Write" }
+    fn name(&self) -> &str {
+        "Write"
+    }
 
     fn schema(&self) -> ToolSchema {
         ToolSchema {
@@ -43,7 +45,9 @@ impl Tool for WriteTool {
         Box::pin(async move {
             let path_str = args.get("path").and_then(|v| v.as_str()).unwrap_or("");
             let content = args.get("content").and_then(|v| v.as_str()).unwrap_or("");
-            if path_str.is_empty() { bail!("missing path argument"); }
+            if path_str.is_empty() {
+                bail!("missing path argument");
+            }
 
             let path = PathBuf::from(path_str);
             if let Some(parent) = path.parent() {
@@ -90,10 +94,14 @@ mod tests {
         let tool = WriteTool;
         let (tx, _rx) = mpsc::channel(32);
         let cancel = CancellationToken::new();
-        let result = tool.execute(
-            serde_json::json!({"path": file.to_str().unwrap(), "content": "hello"}),
-            tx, cancel,
-        ).await.unwrap();
+        let result = tool
+            .execute(
+                serde_json::json!({"path": file.to_str().unwrap(), "content": "hello"}),
+                tx,
+                cancel,
+            )
+            .await
+            .unwrap();
 
         assert!(result.contains("Created"));
         assert_eq!(std::fs::read_to_string(&file).unwrap(), "hello");
@@ -109,11 +117,12 @@ mod tests {
         let cancel = CancellationToken::new();
         tool.execute(
             serde_json::json!({"path": file.to_str().unwrap(), "content": "deep"}),
-            tx, cancel,
-        ).await.unwrap();
+            tx,
+            cancel,
+        )
+        .await
+        .unwrap();
 
         assert_eq!(std::fs::read_to_string(&file).unwrap(), "deep");
     }
-
-
 }

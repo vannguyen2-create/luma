@@ -1,6 +1,6 @@
+use super::Action;
 /// App commands — slash commands, mode/model selection, session resume.
 use super::state::PickerMode;
-use super::Action;
 use crate::config::models::{self, AgentMode};
 use crate::core::types::ThinkingLevel;
 use crate::event::AgentCommand;
@@ -298,5 +298,6 @@ impl super::App {
     pub(super) fn sync_prompt_commands(&mut self) {
         let is_new_thread = !self.doc.has_user_content();
         self.ui.prompt.set_command_visible("resume", is_new_thread);
+        self.ui.prompt.set_command_visible("new", !is_new_thread);
     }
 }

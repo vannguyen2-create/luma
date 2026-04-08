@@ -1,6 +1,6 @@
+use super::ToolBlock;
 /// Tool block rendering — pending, block (write/edit), search, inline.
 use super::diff::{diff_line_lang, lang_from_path};
-use super::ToolBlock;
 use crate::tui::text::{Line, Span};
 use crate::tui::theme::{icon, palette};
 use smallvec::smallvec;
@@ -41,15 +41,17 @@ pub fn render_tool(tb: &ToolBlock, content_w: usize, spinner_frame: usize) -> Ve
 
 fn render_pending(tb: &ToolBlock, w: usize, spinner_frame: usize) -> Vec<Line> {
     let spinner = icon::SPINNER[spinner_frame % icon::SPINNER.len()];
-    let has_content =
-        !tb.output.is_empty() || tb.stream.as_ref().is_some_and(|s| !s.is_empty());
+    let has_content = !tb.output.is_empty() || tb.stream.as_ref().is_some_and(|s| !s.is_empty());
 
     let mut h = smallvec![Span::new(format!("{spinner} "), palette::ACCENT)];
     if has_content || !tb.summary.is_empty() {
         h.push(Span::bold(tb.name.clone(), palette::ACCENT));
         h.push(Span::new(format!(" {}", tb.summary), palette::DIM));
     } else {
-        h.push(Span::new(format!("preparing {}...", tb.name), palette::MUTED));
+        h.push(Span::new(
+            format!("preparing {}...", tb.name),
+            palette::MUTED,
+        ));
     }
     let mut result = crate::tui::text::wrap_line(&Line::new(h), w, None);
 
@@ -154,7 +156,11 @@ fn render_search(tb: &ToolBlock, w: usize) -> Vec<Line> {
         let url = tb.output.get(idx + 1).map(|s| s.trim()).unwrap_or("");
         let snippet = if idx + 2 < tb.output.len() {
             let s = tb.output[idx + 2].trim();
-            if s.is_empty() || s.starts_with("http") { "" } else { s }
+            if s.is_empty() || s.starts_with("http") {
+                ""
+            } else {
+                s
+            }
         } else {
             ""
         };
@@ -235,10 +241,7 @@ fn push_expand_hint(h: &mut smallvec::SmallVec<[Span; 4]>, tb: &ToolBlock) {
     let total = tb.output.len();
     if total > TOOL_PREVIEW_LINES {
         if tb.is_expanded {
-            h.push(Span::new(
-                " (click to collapse)".to_owned(),
-                palette::MUTED,
-            ));
+            h.push(Span::new(" (click to collapse)".to_owned(), palette::MUTED));
         } else {
             h.push(Span::new(
                 format!(" ({total} lines · click to expand)"),

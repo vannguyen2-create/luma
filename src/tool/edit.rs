@@ -1,16 +1,14 @@
 /// Edit tool — find-and-replace in files with safety checks.
 use crate::core::tool::Tool;
 use crate::core::types::ToolSchema;
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
+use std::future::Future;
 use std::path::PathBuf;
 use std::pin::Pin;
-use std::future::Future;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
 const MAX_EDIT_FILE_SIZE: u64 = 10 * 1024 * 1024; // 10 MB
-
-
 
 /// Normalize curly quotes to straight quotes for fuzzy matching.
 fn normalize_quotes(s: &str) -> String {
@@ -44,7 +42,9 @@ fn find_actual_string(content: &str, search: &str) -> Option<String> {
 pub struct EditTool;
 
 impl Tool for EditTool {
-    fn name(&self) -> &str { "Edit" }
+    fn name(&self) -> &str {
+        "Edit"
+    }
 
     fn schema(&self) -> ToolSchema {
         ToolSchema {
@@ -57,7 +57,8 @@ impl Tool for EditTool {
                 "- Preserve exact indentation from the file when specifying old_string.\n",
                 "- Use replace_all for renaming variables/strings across the file.\n",
                 "- To create new files, use the `write` tool instead.",
-            ).into(),
+            )
+            .into(),
             parameters: serde_json::json!({
                 "type": "object",
                 "properties": {
@@ -79,12 +80,25 @@ impl Tool for EditTool {
     ) -> Pin<Box<dyn Future<Output = Result<String>> + Send + '_>> {
         Box::pin(async move {
             let path_str = args.get("path").and_then(|v| v.as_str()).unwrap_or("");
-            let old = args.get("old_string").and_then(|v| v.as_str()).unwrap_or("");
-            let new = args.get("new_string").and_then(|v| v.as_str()).unwrap_or("");
-            let replace_all = args.get("replace_all").and_then(|v| v.as_bool()).unwrap_or(false);
+            let old = args
+                .get("old_string")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let new = args
+                .get("new_string")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let replace_all = args
+                .get("replace_all")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
 
-            if path_str.is_empty() { bail!("missing path argument"); }
-            if old == new { bail!("old_string and new_string are identical"); }
+            if path_str.is_empty() {
+                bail!("missing path argument");
+            }
+            if old == new {
+                bail!("old_string and new_string are identical");
+            }
 
             let path = PathBuf::from(path_str);
 
@@ -116,8 +130,10 @@ impl Tool for EditTool {
             if let Ok(meta) = std::fs::metadata(&path)
                 && meta.len() > MAX_EDIT_FILE_SIZE
             {
-                bail!("File too large ({:.1} MB). Use Bash with sed for large files.",
-                    meta.len() as f64 / 1_048_576.0);
+                bail!(
+                    "File too large ({:.1} MB). Use Bash with sed for large files.",
+                    meta.len() as f64 / 1_048_576.0
+                );
             }
 
             // Try exact match first, then curly-quote normalized match
@@ -158,7 +174,9 @@ impl Tool for EditTool {
 
             Ok(format!(
                 "Edited {} ({} replacement{}, {sign}{delta} lines)",
-                path.display(), count, if count > 1 { "s" } else { "" }
+                path.display(),
+                count,
+                if count > 1 { "s" } else { "" }
             ))
         })
     }
@@ -237,6 +255,4 @@ mod tests {
         assert!(result.contains("Created"));
         assert_eq!(std::fs::read_to_string(&file).unwrap(), "content");
     }
-
-
 }

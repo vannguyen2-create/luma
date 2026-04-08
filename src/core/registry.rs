@@ -1,7 +1,7 @@
-/// Tool registry — client tools (we execute) and server capabilities.
-use std::collections::HashMap;
 use crate::core::tool::Tool;
 use crate::core::types::ToolSchema;
+/// Tool registry — client tools (we execute) and server capabilities.
+use std::collections::HashMap;
 
 /// Stores registered tools and declared server capabilities.
 pub struct Registry {
@@ -54,10 +54,14 @@ impl Registry {
     }
 
     #[allow(dead_code)]
-    pub fn len(&self) -> usize { self.tools.len() }
+    pub fn len(&self) -> usize {
+        self.tools.len()
+    }
 
     #[allow(dead_code)]
-    pub fn is_empty(&self) -> bool { self.tools.is_empty() }
+    pub fn is_empty(&self) -> bool {
+        self.tools.is_empty()
+    }
 }
 
 #[cfg(test)]
@@ -71,7 +75,9 @@ mod tests {
     struct FakeTool;
 
     impl Tool for FakeTool {
-        fn name(&self) -> &str { "Read" }
+        fn name(&self) -> &str {
+            "Read"
+        }
         fn schema(&self) -> ToolSchema {
             ToolSchema {
                 name: "Read".into(),
@@ -84,7 +90,8 @@ mod tests {
             _args: serde_json::Value,
             _output_tx: mpsc::Sender<String>,
             _cancel: CancellationToken,
-        ) -> std::pin::Pin<Box<dyn std::future::Future<Output = anyhow::Result<String>> + Send + '_>> {
+        ) -> std::pin::Pin<Box<dyn std::future::Future<Output = anyhow::Result<String>> + Send + '_>>
+        {
             Box::pin(async { Ok("done".into()) })
         }
     }

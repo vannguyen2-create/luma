@@ -1,12 +1,12 @@
 /// Read tool — read files or list directories with line numbers.
 use crate::core::tool::Tool;
 use crate::core::types::ToolSchema;
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 use std::fs;
+use std::future::Future;
 use std::io::{BufRead, BufReader, Read};
 use std::path::PathBuf;
 use std::pin::Pin;
-use std::future::Future;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
@@ -16,19 +16,18 @@ const MAX_FILE_SIZE: u64 = 10 * 1024 * 1024; // 10 MB — reject larger files wi
 
 /// Common binary file extensions — skip these entirely.
 const BINARY_EXTENSIONS: &[&str] = &[
-    "png", "jpg", "jpeg", "gif", "bmp", "ico", "webp", "avif",
-    "mp3", "mp4", "wav", "ogg", "flac", "avi", "mkv", "mov",
-    "zip", "tar", "gz", "bz2", "xz", "7z", "rar",
-    "wasm", "pyc", "class", "o", "so", "dylib", "dll", "exe",
-    "ttf", "otf", "woff", "woff2", "eot",
-    "sqlite", "db",
+    "png", "jpg", "jpeg", "gif", "bmp", "ico", "webp", "avif", "mp3", "mp4", "wav", "ogg", "flac",
+    "avi", "mkv", "mov", "zip", "tar", "gz", "bz2", "xz", "7z", "rar", "wasm", "pyc", "class", "o",
+    "so", "dylib", "dll", "exe", "ttf", "otf", "woff", "woff2", "eot", "sqlite", "db",
 ];
 
 /// Reads files with line numbers or lists directory contents.
 pub struct ReadTool;
 
 impl Tool for ReadTool {
-    fn name(&self) -> &str { "Read" }
+    fn name(&self) -> &str {
+        "Read"
+    }
 
     fn schema(&self) -> ToolSchema {
         ToolSchema {
@@ -63,9 +62,13 @@ impl Tool for ReadTool {
     ) -> Pin<Box<dyn Future<Output = Result<String>> + Send + '_>> {
         Box::pin(async move {
             let path_str = args.get("path").and_then(|v| v.as_str()).unwrap_or("");
-            if path_str.is_empty() { bail!("missing path argument"); }
+            if path_str.is_empty() {
+                bail!("missing path argument");
+            }
 
-            let path = PathBuf::from(path_str).canonicalize().unwrap_or_else(|_| PathBuf::from(path_str));
+            let path = PathBuf::from(path_str)
+                .canonicalize()
+                .unwrap_or_else(|_| PathBuf::from(path_str));
 
             let meta = match fs::metadata(&path) {
                 Ok(m) => m,
@@ -87,7 +90,9 @@ impl Tool for ReadTool {
                         let name = e.file_name().to_string_lossy().to_string();
                         if e.file_type().map(|t| t.is_dir()).unwrap_or(false) {
                             format!("{name}/")
-                        } else { name }
+                        } else {
+                            name
+                        }
                     })
                     .collect();
                 entries.sort();
@@ -98,11 +103,21 @@ impl Tool for ReadTool {
             if let Some(ext) = path.extension().and_then(|e| e.to_str())
                 && BINARY_EXTENSIONS.contains(&ext.to_ascii_lowercase().as_str())
             {
-                bail!("Cannot read binary file ({}). Use appropriate tools for binary analysis.", ext);
+                bail!(
+                    "Cannot read binary file ({}). Use appropriate tools for binary analysis.",
+                    ext
+                );
             }
 
-            let offset = args.get("offset").and_then(|v| v.as_u64()).unwrap_or(1).max(1) as usize;
-            let limit = args.get("limit").and_then(|v| v.as_u64()).unwrap_or(DEFAULT_LIMIT as u64) as usize;
+            let offset = args
+                .get("offset")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(1)
+                .max(1) as usize;
+            let limit = args
+                .get("limit")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(DEFAULT_LIMIT as u64) as usize;
             let has_explicit_range = args.get("offset").is_some() || args.get("limit").is_some();
 
             // File size guard — reject large files without explicit range
@@ -134,8 +149,12 @@ impl Tool for ReadTool {
                 let line = line?;
                 let line_num = i + 1;
                 total_lines = line_num;
-                if line_num < offset { continue; }
-                if count >= limit { continue; } // keep counting total_lines
+                if line_num < offset {
+                    continue;
+                }
+                if count >= limit {
+                    continue;
+                } // keep counting total_lines
                 if line.len() > MAX_LINE_LEN {
                     result.push_str(&format!("{line_num}: {}...\n", &line[..MAX_LINE_LEN]));
                 } else {
@@ -148,7 +167,9 @@ impl Tool for ReadTool {
                 if total_lines == 0 {
                     return Ok("(empty file)".into());
                 }
-                return Ok(format!("(file has {total_lines} lines, offset {offset} is past end)"));
+                return Ok(format!(
+                    "(file has {total_lines} lines, offset {offset} is past end)"
+                ));
             }
 
             // Append total line count hint for model context
@@ -186,10 +207,14 @@ fn suggest_similar(path: &std::path::Path) -> Option<String> {
 
 /// Simple edit distance (Levenshtein), capped for performance.
 fn str_distance(a: &str, b: &str) -> usize {
-    if a == b { return 0; }
+    if a == b {
+        return 0;
+    }
     let (a, b) = (a.as_bytes(), b.as_bytes());
     let (n, m) = (a.len(), b.len());
-    if n.abs_diff(m) > 3 { return 4; } // early exit
+    if n.abs_diff(m) > 3 {
+        return 4;
+    } // early exit
     let mut prev: Vec<usize> = (0..=m).collect();
     let mut curr = vec![0; m + 1];
     for i in 1..=n {
@@ -217,10 +242,14 @@ mod tests {
         let tool = ReadTool;
         let (tx, _rx) = mpsc::channel(1);
         let cancel = CancellationToken::new();
-        let result = tool.execute(
-            serde_json::json!({"path": file.to_str().unwrap()}),
-            tx, cancel,
-        ).await.unwrap();
+        let result = tool
+            .execute(
+                serde_json::json!({"path": file.to_str().unwrap()}),
+                tx,
+                cancel,
+            )
+            .await
+            .unwrap();
 
         assert!(result.contains("1: line1"));
         assert!(result.contains("3: line3"));
@@ -235,10 +264,14 @@ mod tests {
         let tool = ReadTool;
         let (tx, _rx) = mpsc::channel(1);
         let cancel = CancellationToken::new();
-        let result = tool.execute(
-            serde_json::json!({"path": dir.path().to_str().unwrap()}),
-            tx, cancel,
-        ).await.unwrap();
+        let result = tool
+            .execute(
+                serde_json::json!({"path": dir.path().to_str().unwrap()}),
+                tx,
+                cancel,
+            )
+            .await
+            .unwrap();
 
         assert!(result.contains("a.txt"));
         assert!(result.contains("sub/"));
@@ -249,15 +282,21 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let file = dir.path().join("big.txt");
         let mut f = std::fs::File::create(&file).unwrap();
-        for i in 1..=100 { writeln!(f, "line {i}").unwrap(); }
+        for i in 1..=100 {
+            writeln!(f, "line {i}").unwrap();
+        }
 
         let tool = ReadTool;
         let (tx, _rx) = mpsc::channel(1);
         let cancel = CancellationToken::new();
-        let result = tool.execute(
-            serde_json::json!({"path": file.to_str().unwrap(), "offset": 50, "limit": 5}),
-            tx, cancel,
-        ).await.unwrap();
+        let result = tool
+            .execute(
+                serde_json::json!({"path": file.to_str().unwrap(), "offset": 50, "limit": 5}),
+                tx,
+                cancel,
+            )
+            .await
+            .unwrap();
 
         assert!(result.contains("50: line 50"));
         assert!(result.contains("54: line 54"));
@@ -273,10 +312,13 @@ mod tests {
         let tool = ReadTool;
         let (tx, _rx) = mpsc::channel(1);
         let cancel = CancellationToken::new();
-        let result = tool.execute(
-            serde_json::json!({"path": file.to_str().unwrap()}),
-            tx, cancel,
-        ).await;
+        let result = tool
+            .execute(
+                serde_json::json!({"path": file.to_str().unwrap()}),
+                tx,
+                cancel,
+            )
+            .await;
 
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("binary"));
@@ -290,10 +332,13 @@ mod tests {
         let tool = ReadTool;
         let (tx, _rx) = mpsc::channel(1);
         let cancel = CancellationToken::new();
-        let result = tool.execute(
-            serde_json::json!({"path": dir.path().join("mian.rs").to_str().unwrap()}),
-            tx, cancel,
-        ).await;
+        let result = tool
+            .execute(
+                serde_json::json!({"path": dir.path().join("mian.rs").to_str().unwrap()}),
+                tx,
+                cancel,
+            )
+            .await;
 
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
@@ -313,16 +358,25 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let file = dir.path().join("lines.txt");
         let mut f = std::fs::File::create(&file).unwrap();
-        for i in 1..=50 { writeln!(f, "line {i}").unwrap(); }
+        for i in 1..=50 {
+            writeln!(f, "line {i}").unwrap();
+        }
 
         let tool = ReadTool;
         let (tx, _rx) = mpsc::channel(1);
         let cancel = CancellationToken::new();
-        let result = tool.execute(
-            serde_json::json!({"path": file.to_str().unwrap(), "limit": 5}),
-            tx, cancel,
-        ).await.unwrap();
+        let result = tool
+            .execute(
+                serde_json::json!({"path": file.to_str().unwrap(), "limit": 5}),
+                tx,
+                cancel,
+            )
+            .await
+            .unwrap();
 
-        assert!(result.contains("50 lines total"), "should show total: {result}");
+        assert!(
+            result.contains("50 lines total"),
+            "should show total: {result}"
+        );
     }
 }

@@ -1,5 +1,5 @@
 /// SSE (Server-Sent Events) streaming parser for LLM APIs.
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 use tokio_util::sync::CancellationToken;
 
 /// A parsed SSE event with type and JSON data.
@@ -20,7 +20,8 @@ pub async fn post_sse(
     let client = reqwest::Client::builder()
         .connect_timeout(std::time::Duration::from_secs(30))
         .build()?;
-    let mut req = client.post(url)
+    let mut req = client
+        .post(url)
         .header("Content-Type", "application/json")
         .json(body);
 
@@ -33,9 +34,11 @@ pub async fn post_sse(
     if !response.status().is_success() {
         let status = response.status();
         let body = response.text().await.unwrap_or_default();
-        let msg = serde_json::from_str::<serde_json::Value>(&body).ok()
+        let msg = serde_json::from_str::<serde_json::Value>(&body)
+            .ok()
             .and_then(|v| {
-                v["error"]["message"].as_str()
+                v["error"]["message"]
+                    .as_str()
                     .or_else(|| v["message"].as_str())
                     .or_else(|| v["error"].as_str())
                     .map(|s| s.to_owned())
@@ -56,7 +59,9 @@ pub async fn post_sse(
             _ = cancel.cancelled() => { bail!("Aborted"); }
             _ = tokio::time::sleep(chunk_timeout) => { bail!("SSE stream timeout — no data for 120s"); }
         };
-        let Some(chunk) = chunk else { break; };
+        let Some(chunk) = chunk else {
+            break;
+        };
         buf.push_str(&String::from_utf8_lossy(&chunk));
 
         let mut start = 0;
@@ -70,10 +75,15 @@ pub async fn post_sse(
                 current_event.push_str(rest.trim());
             } else if let Some(rest) = line.strip_prefix("data:") {
                 let raw = rest.trim();
-                if raw == "[DONE]" { continue; }
+                if raw == "[DONE]" {
+                    continue;
+                }
                 if let Ok(data) = serde_json::from_str::<serde_json::Value>(raw) {
                     let event_type = if current_event.is_empty() {
-                        data.get("type").and_then(|t| t.as_str()).unwrap_or("").to_owned()
+                        data.get("type")
+                            .and_then(|t| t.as_str())
+                            .unwrap_or("")
+                            .to_owned()
                     } else {
                         current_event.clone()
                     };

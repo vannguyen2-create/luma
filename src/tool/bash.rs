@@ -3,30 +3,40 @@ use crate::core::tool::Tool;
 use crate::core::types::ToolSchema;
 use crate::tool::bash_safety;
 use crate::tool::shell;
-use anyhow::{bail, Result};
-use std::pin::Pin;
+use anyhow::{Result, bail};
 use std::future::Future;
+use std::pin::Pin;
 use tokio::io::AsyncReadExt;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
 const MAX_OUTPUT: usize = 32_000;
-const HEAD_BYTES: usize = 8_000;  // keep first 8K
+const HEAD_BYTES: usize = 8_000; // keep first 8K
 const TAIL_BYTES: usize = 20_000; // keep last 20K — errors/results are at the end
 const DEFAULT_TIMEOUT_MS: u64 = 30_000;
 
 /// Execute shell commands with streaming output.
-pub struct BashTool { name: &'static str }
+pub struct BashTool {
+    name: &'static str,
+}
 
 impl BashTool {
     /// Create a BashTool with Claude-style naming.
-    pub fn claude() -> Self { Self { name: "Bash" } }
+    pub fn claude() -> Self {
+        Self { name: "Bash" }
+    }
     /// Create a BashTool with Codex-style naming.
-    pub fn codex() -> Self { Self { name: "exec_command" } }
+    pub fn codex() -> Self {
+        Self {
+            name: "exec_command",
+        }
+    }
 }
 
 impl Tool for BashTool {
-    fn name(&self) -> &str { self.name }
+    fn name(&self) -> &str {
+        self.name
+    }
 
     fn schema(&self) -> ToolSchema {
         ToolSchema {
@@ -47,7 +57,8 @@ impl Tool for BashTool {
                 "- Dependent commands: chain with && in a single call.\n",
                 "- Only run git commit/push if explicitly instructed.\n",
                 "- Timeout default 30s, max 120s.",
-            ).into(),
+            )
+            .into(),
             parameters: serde_json::json!({
                 "type": "object",
                 "properties": {
@@ -67,9 +78,12 @@ impl Tool for BashTool {
     ) -> Pin<Box<dyn Future<Output = Result<String>> + Send + '_>> {
         Box::pin(async move {
             let command = args.get("command").and_then(|v| v.as_str()).unwrap_or("");
-            if command.is_empty() { bail!("missing command argument"); }
+            if command.is_empty() {
+                bail!("missing command argument");
+            }
 
-            let timeout_ms = args.get("timeout")
+            let timeout_ms = args
+                .get("timeout")
                 .and_then(|v| v.as_u64())
                 .unwrap_or(DEFAULT_TIMEOUT_MS);
 
@@ -85,15 +99,25 @@ impl Tool for BashTool {
             let mut stderr = child.stderr.take().expect("stderr piped");
 
             let (output, exit_code) = read_output(
-                &mut stdout, &mut stderr, &output_tx, &cancel, &mut child, timeout_ms,
-            ).await?;
+                &mut stdout,
+                &mut stderr,
+                &output_tx,
+                &cancel,
+                &mut child,
+                timeout_ms,
+            )
+            .await?;
 
             let mut result_str = output;
             if exit_code != 0 && !result_str.contains("[exit code:") {
                 result_str.push_str(&format!("\n[exit code: {exit_code}]"));
             }
 
-            if result_str.trim().is_empty() { Ok("(no output)".into()) } else { Ok(result_str) }
+            if result_str.trim().is_empty() {
+                Ok("(no output)".into())
+            } else {
+                Ok(result_str)
+            }
         })
     }
 }
@@ -117,11 +141,12 @@ async fn read_output(
     let mut timed_out = false;
     let mut stdout_done = false;
     let mut stderr_done = false;
-    let deadline = tokio::time::Instant::now()
-        + std::time::Duration::from_millis(timeout_ms);
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_millis(timeout_ms);
 
     loop {
-        if stdout_done && stderr_done { break; }
+        if stdout_done && stderr_done {
+            break;
+        }
         tokio::select! {
             biased;
             _ = cancel.cancelled() => { aborted = true; break; }
@@ -155,8 +180,12 @@ async fn read_output(
 
     if aborted || timed_out {
         child.kill().await.ok();
-        if aborted { out.push_str("\n[aborted]"); }
-        if timed_out { out.push_str("\n[timeout]"); }
+        if aborted {
+            out.push_str("\n[aborted]");
+        }
+        if timed_out {
+            out.push_str("\n[timeout]");
+        }
         Ok((out, if aborted { 130 } else { 124 }))
     } else {
         let status = child.wait().await?;
@@ -190,10 +219,10 @@ mod tests {
         let tool = BashTool::claude();
         let (tx, mut rx) = mpsc::channel(32);
         let cancel = CancellationToken::new();
-        let result = tool.execute(
-            serde_json::json!({"command": "echo hello"}),
-            tx, cancel,
-        ).await.unwrap();
+        let result = tool
+            .execute(serde_json::json!({"command": "echo hello"}), tx, cancel)
+            .await
+            .unwrap();
 
         assert!(result.contains("hello"));
         let chunk = rx.try_recv();
@@ -205,10 +234,10 @@ mod tests {
         let tool = BashTool::claude();
         let (tx, _rx) = mpsc::channel(32);
         let cancel = CancellationToken::new();
-        let result = tool.execute(
-            serde_json::json!({"command": "exit 42"}),
-            tx, cancel,
-        ).await.unwrap();
+        let result = tool
+            .execute(serde_json::json!({"command": "exit 42"}), tx, cancel)
+            .await
+            .unwrap();
 
         assert!(result.contains("[exit code: 42]"));
     }
@@ -218,10 +247,9 @@ mod tests {
         let tool = BashTool::claude();
         let (tx, _rx) = mpsc::channel(1);
         let cancel = CancellationToken::new();
-        let result = tool.execute(
-            serde_json::json!({"command": "rm -rf /"}),
-            tx, cancel,
-        ).await;
+        let result = tool
+            .execute(serde_json::json!({"command": "rm -rf /"}), tx, cancel)
+            .await;
 
         assert!(result.is_err());
     }
@@ -239,10 +267,10 @@ mod tests {
             cancel_clone.cancel();
         });
 
-        let result = tool.execute(
-            serde_json::json!({"command": "sleep 10"}),
-            tx, cancel,
-        ).await.unwrap();
+        let result = tool
+            .execute(serde_json::json!({"command": "sleep 10"}), tx, cancel)
+            .await
+            .unwrap();
 
         assert!(result.contains("[aborted]"));
     }
@@ -260,10 +288,14 @@ mod tests {
             cancel_clone.cancel();
         });
 
-        let result = tool.execute(
-            serde_json::json!({"command": "ping -n 100 127.0.0.1"}),
-            tx, cancel,
-        ).await.unwrap();
+        let result = tool
+            .execute(
+                serde_json::json!({"command": "ping -n 100 127.0.0.1"}),
+                tx,
+                cancel,
+            )
+            .await
+            .unwrap();
 
         assert!(result.contains("[aborted]"));
     }

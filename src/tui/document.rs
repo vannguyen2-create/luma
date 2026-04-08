@@ -68,7 +68,9 @@ impl Document {
 
     pub fn assistant_message(&mut self, text: &str) {
         let trimmed = text.trim_start_matches('\n');
-        if trimmed.is_empty() { return; }
+        if trimmed.is_empty() {
+            return;
+        }
         self.commit_last();
         self.auto_gap(&Block::Text(TextBlock::new()));
         let mut tb = TextBlock::new();
@@ -293,9 +295,10 @@ mod tests {
         doc.newline();
         doc.tool_start("Bash", "$ ls");
         // Thinking → Tool should have gap
-        let has_gap = doc.blocks.windows(2).any(|w| {
-            matches!(&w[0], Block::Gap) && matches!(&w[1], Block::Tool(_))
-        });
+        let has_gap = doc
+            .blocks
+            .windows(2)
+            .any(|w| matches!(&w[0], Block::Gap) && matches!(&w[1], Block::Tool(_)));
         assert!(has_gap, "missing gap between Thinking and Tool");
     }
 
@@ -304,9 +307,10 @@ mod tests {
         let mut doc = Document::new();
         doc.append_thinking("hmm\n");
         doc.append_token("answer");
-        let has_gap = doc.blocks.windows(2).any(|w| {
-            matches!(&w[0], Block::Gap) && matches!(&w[1], Block::Text(_))
-        });
+        let has_gap = doc
+            .blocks
+            .windows(2)
+            .any(|w| matches!(&w[0], Block::Gap) && matches!(&w[1], Block::Text(_)));
         assert!(!has_gap, "should not have gap between Thinking and Text");
     }
 
@@ -316,9 +320,17 @@ mod tests {
         doc.tool_start("Bash", "$ ls");
         doc.tool_output("Bash", "file1\nfile2\n");
         doc.tool_end("Bash", "exit 0");
-        let tb = doc.blocks.iter().find_map(|b| {
-            if let Block::Tool(tb) = b { Some(tb) } else { None }
-        }).unwrap();
+        let tb = doc
+            .blocks
+            .iter()
+            .find_map(|b| {
+                if let Block::Tool(tb) = b {
+                    Some(tb)
+                } else {
+                    None
+                }
+            })
+            .unwrap();
         assert!(tb.is_done);
         assert_eq!(tb.output, vec!["file1", "file2"]);
         assert_eq!(tb.end_summary, "exit 0");
@@ -332,7 +344,11 @@ mod tests {
             doc.tool_output("Bash", &format!("line{i}\n"));
         }
         doc.tool_end("Bash", "");
-        let idx = doc.blocks.iter().position(|b| matches!(b, Block::Tool(_))).unwrap();
+        let idx = doc
+            .blocks
+            .iter()
+            .position(|b| matches!(b, Block::Tool(_)))
+            .unwrap();
         assert!(doc.toggle_expand(idx));
     }
 
@@ -349,9 +365,17 @@ mod tests {
         let mut doc = Document::new();
         doc.tool_start("Bash", "$ ls");
         doc.abort();
-        let tb = doc.blocks.iter().find_map(|b| {
-            if let Block::Tool(tb) = b { Some(tb) } else { None }
-        }).unwrap();
+        let tb = doc
+            .blocks
+            .iter()
+            .find_map(|b| {
+                if let Block::Tool(tb) = b {
+                    Some(tb)
+                } else {
+                    None
+                }
+            })
+            .unwrap();
         assert!(tb.is_done);
     }
 

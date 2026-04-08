@@ -18,7 +18,9 @@ const MAX_FILE_SIZE: u64 = 1_000_000;
 pub struct GrepTool;
 
 impl Tool for GrepTool {
-    fn name(&self) -> &str { "Grep" }
+    fn name(&self) -> &str {
+        "Grep"
+    }
 
     fn schema(&self) -> ToolSchema {
         ToolSchema {
@@ -66,7 +68,10 @@ impl Tool for GrepTool {
             let root = if Path::new(path).is_absolute() {
                 path.to_owned()
             } else {
-                std::env::current_dir()?.join(path).to_string_lossy().into_owned()
+                std::env::current_dir()?
+                    .join(path)
+                    .to_string_lossy()
+                    .into_owned()
             };
 
             let re = regex::Regex::new(pattern_str)
@@ -92,7 +97,9 @@ impl Tool for GrepTool {
                 .build();
 
             for entry in walker {
-                if matches.len() >= MAX_RESULTS { break; }
+                if matches.len() >= MAX_RESULTS {
+                    break;
+                }
                 let entry = match entry {
                     Ok(e) => e,
                     Err(_) => continue,
@@ -115,7 +122,9 @@ impl Tool for GrepTool {
                     Ok(m) => m,
                     Err(_) => continue,
                 };
-                if meta.len() > MAX_FILE_SIZE { continue; }
+                if meta.len() > MAX_FILE_SIZE {
+                    continue;
+                }
 
                 let content = match std::fs::read_to_string(entry_path) {
                     Ok(c) => c,
@@ -126,7 +135,9 @@ impl Tool for GrepTool {
                 let rel_str = rel.to_string_lossy().into_owned();
 
                 for (i, line) in content.lines().enumerate() {
-                    if matches.len() >= MAX_RESULTS { break; }
+                    if matches.len() >= MAX_RESULTS {
+                        break;
+                    }
                     if re.is_match(line) {
                         matches.push(FileMatch {
                             path: rel_str.clone(),
@@ -186,7 +197,10 @@ mod tests {
         let (tx, _rx) = mpsc::channel(64);
         let tool = GrepTool;
         let args = serde_json::json!({"pattern": "fn main", "path": root.to_str().unwrap()});
-        let result = tool.execute(args, tx, CancellationToken::new()).await.unwrap();
+        let result = tool
+            .execute(args, tx, CancellationToken::new())
+            .await
+            .unwrap();
         assert!(result.contains("fn main"));
     }
 
@@ -196,8 +210,12 @@ mod tests {
         let _ = std::fs::create_dir_all(&dir);
         let (tx, _rx) = mpsc::channel(64);
         let tool = GrepTool;
-        let args = serde_json::json!({"pattern": "ZZZZZ_NONEXISTENT", "path": dir.to_str().unwrap()});
-        let result = tool.execute(args, tx, CancellationToken::new()).await.unwrap();
+        let args =
+            serde_json::json!({"pattern": "ZZZZZ_NONEXISTENT", "path": dir.to_str().unwrap()});
+        let result = tool
+            .execute(args, tx, CancellationToken::new())
+            .await
+            .unwrap();
         assert_eq!(result, "No matches found");
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -212,7 +230,10 @@ mod tests {
         let (tx, _rx) = mpsc::channel(64);
         let tool = GrepTool;
         let args = serde_json::json!({"pattern": "pub struct", "include": "*.rs", "path": root.to_str().unwrap()});
-        let result = tool.execute(args, tx, CancellationToken::new()).await.unwrap();
+        let result = tool
+            .execute(args, tx, CancellationToken::new())
+            .await
+            .unwrap();
         assert!(result.contains("pub struct"));
         assert!(!result.contains("main.py"));
     }
@@ -229,9 +250,18 @@ mod tests {
         let (tx, _rx) = mpsc::channel(64);
         let tool = GrepTool;
         let args = serde_json::json!({"pattern": "findme", "path": root.to_str().unwrap()});
-        let result = tool.execute(args, tx, CancellationToken::new()).await.unwrap();
+        let result = tool
+            .execute(args, tx, CancellationToken::new())
+            .await
+            .unwrap();
 
-        assert!(result.contains("keep.txt"), "should include keep.txt: {result}");
-        assert!(!result.contains("ignored.txt"), "should exclude ignored.txt: {result}");
+        assert!(
+            result.contains("keep.txt"),
+            "should include keep.txt: {result}"
+        );
+        assert!(
+            !result.contains("ignored.txt"),
+            "should exclude ignored.txt: {result}"
+        );
     }
 }

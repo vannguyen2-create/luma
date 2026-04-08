@@ -46,11 +46,7 @@ mod tests {
     #[tokio::test]
     #[cfg(unix)]
     async fn exit_code() {
-        let output = spawn("exit 42")
-            .unwrap()
-            .wait_with_output()
-            .await
-            .unwrap();
+        let output = spawn("exit 42").unwrap().wait_with_output().await.unwrap();
         assert_eq!(output.status.code(), Some(42));
     }
 

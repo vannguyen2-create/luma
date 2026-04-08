@@ -1,8 +1,8 @@
 /// Table parsing and rendering — pipe-delimited markdown tables.
 use super::inline::parse_inline;
-use crate::tui::text::{display_width, Line, Span};
+use crate::tui::text::{Line, Span, display_width};
 use crate::tui::theme::palette;
-use smallvec::{smallvec, SmallVec};
+use smallvec::{SmallVec, smallvec};
 
 /// Table column alignment.
 #[derive(Debug, Clone, Copy)]

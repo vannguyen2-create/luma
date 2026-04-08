@@ -192,8 +192,7 @@ impl App {
     }
 
     fn process_event(&mut self, event: Event) -> bool {
-        let result =
-            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| self.handle(event)));
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| self.handle(event)));
         match result {
             Ok(Action::Continue | Action::Render) => false,
             Ok(Action::Quit) => true,
@@ -272,7 +271,9 @@ impl App {
 
         loop {
             let Some(event) = rx.recv().await else { break };
-            if self.process_event(event) { break; }
+            if self.process_event(event) {
+                break;
+            }
             let mut drained = 1usize;
             while drained < DRAIN_BUDGET {
                 match rx.try_recv() {
@@ -356,11 +357,17 @@ mod tests {
 
     #[test]
     fn format_duration_short() {
-        assert_eq!(format_duration(std::time::Duration::from_secs_f64(3.456)), "3.5s");
+        assert_eq!(
+            format_duration(std::time::Duration::from_secs_f64(3.456)),
+            "3.5s"
+        );
     }
 
     #[test]
     fn format_duration_long() {
-        assert_eq!(format_duration(std::time::Duration::from_secs(95)), "1m 35s");
+        assert_eq!(
+            format_duration(std::time::Duration::from_secs(95)),
+            "1m 35s"
+        );
     }
 }

@@ -1,8 +1,10 @@
 /// OpenAI-compatible chat completions provider with SSE streaming.
 use crate::core::provider::Provider;
-use crate::core::types::{ContentBlock, Message, Role, ToolCall, ToolCallFunction, ToolSchema, ThinkingLevel, Usage};
+use crate::core::types::{
+    ContentBlock, Message, Role, ThinkingLevel, ToolCall, ToolCallFunction, ToolSchema, Usage,
+};
 use crate::event::Event;
-use crate::provider::sse::{post_sse, SseEvent};
+use crate::provider::sse::{SseEvent, post_sse};
 use anyhow::Result;
 use std::collections::HashMap;
 use tokio::sync::mpsc;
@@ -30,13 +32,18 @@ impl OpenAIProvider {
             thinking: ThinkingLevel::Low,
         }
     }
-
 }
 
 impl Provider for OpenAIProvider {
-    fn name(&self) -> &str { "openai" }
-    fn thinking(&self) -> ThinkingLevel { self.thinking }
-    fn set_thinking(&mut self, level: ThinkingLevel) { self.thinking = level; }
+    fn name(&self) -> &str {
+        "openai"
+    }
+    fn thinking(&self) -> ThinkingLevel {
+        self.thinking
+    }
+    fn set_thinking(&mut self, level: ThinkingLevel) {
+        self.thinking = level;
+    }
 
     fn server_tool_schemas(&self, _capabilities: &[String]) -> Vec<serde_json::Value> {
         // Chat Completions API does not support web_search tool type.
@@ -53,104 +60,126 @@ impl Provider for OpenAIProvider {
         resolve_image: &'a crate::core::provider::ImageResolver,
         tx: mpsc::Sender<Event>,
         cancel: CancellationToken,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(Message, Usage)>> + Send + 'a>> {
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(Message, Usage)>> + Send + 'a>>
+    {
         Box::pin(async move {
-        let api_messages = to_api_messages(messages, resolve_image);
-        let mut api_tools = to_api_tools(tools);
+            let api_messages = to_api_messages(messages, resolve_image);
+            let mut api_tools = to_api_tools(tools);
 
-        // Append server-side tools
-        for st in server_tools {
-            api_tools.push(st.clone());
-        }
-
-        let mut body = serde_json::json!({
-            "model": self.model,
-            "max_tokens": self.max_tokens,
-            "messages": api_messages,
-            "stream": true,
-        });
-
-        if !api_tools.is_empty() {
-            body["tools"] = api_tools.into();
-        }
-
-        let budget = self.thinking.budget();
-        if budget > 0 {
-            body["thinking"] = serde_json::json!({"type": "enabled", "budget_tokens": budget});
-        }
-
-        let auth_header = format!("Bearer {}", self.api_key);
-        let headers = [("Authorization", auth_header.as_str())];
-
-        let mut text = String::new();
-        let mut tool_map: HashMap<u64, (String, String, String)> = HashMap::new();
-        let mut usage = Usage::default();
-
-        let tx_ref = &tx;
-        let usage_ref = &mut usage;
-        post_sse(
-            &format!("{}/chat/completions", self.base_url),
-            &headers,
-            &body,
-            &cancel,
-            |event: SseEvent| {
-                let delta = &event.data["choices"][0]["delta"];
-                if delta.is_null() { return; }
-
-                if let Some(t) = delta["reasoning_content"].as_str()
-                    && !t.is_empty()
-                {
-                    let _ = tx_ref.try_send(Event::Thinking(t.to_owned()));
-                }
-
-                if let Some(t) = delta["content"].as_str()
-                    && !t.is_empty()
-                {
-                    text.push_str(t);
-                    let _ = tx_ref.try_send(Event::Token(t.to_owned()));
-                }
-
-                if let Some(tcs) = delta["tool_calls"].as_array() {
-                    for tc in tcs {
-                        let idx = tc["index"].as_u64().unwrap_or(0);
-                        let entry = tool_map.entry(idx).or_insert_with(|| (String::new(), String::new(), String::new()));
-                        if let Some(id) = tc["id"].as_str() { entry.0 = id.to_owned(); }
-                        if let Some(name) = tc["function"]["name"].as_str() { entry.1 = name.to_owned(); }
-                        if let Some(args) = tc["function"]["arguments"].as_str() { entry.2.push_str(args); }
-                    }
-                }
-
-                if let Some(u) = event.data["usage"].as_object() {
-                    let cached = u.get("prompt_tokens_details")
-                        .and_then(|d| d.get("cached_tokens"))
-                        .and_then(|v| v.as_u64());
-                    let prompt = u.get("prompt_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
-                    // OpenAI prompt_tokens includes cached — subtract to match Claude semantics
-                    let non_cached = prompt.saturating_sub(cached.unwrap_or(0));
-                    let u_data = Usage {
-                        input_tokens: non_cached,
-                        output_tokens: u.get("completion_tokens").and_then(|v| v.as_u64()).unwrap_or(0),
-                        cache_read: cached,
-                        cache_write: None,
-                    };
-                    *usage_ref = u_data.clone();
-                    let _ = tx_ref.try_send(Event::Usage(u_data));
-                }
-            },
-        ).await?;
-
-        let tool_calls: Vec<ToolCall> = tool_map.into_values().map(|(id, name, args)| {
-            ToolCall {
-                id,
-                r#type: "function".into(),
-                function: ToolCallFunction { name, arguments: args },
+            // Append server-side tools
+            for st in server_tools {
+                api_tools.push(st.clone());
             }
-        }).collect();
 
-        let mut msg = Message::assistant(text);
-        if !tool_calls.is_empty() { msg.tool_calls = Some(tool_calls); }
-        Ok((msg, usage))
-    })
+            let mut body = serde_json::json!({
+                "model": self.model,
+                "max_tokens": self.max_tokens,
+                "messages": api_messages,
+                "stream": true,
+            });
+
+            if !api_tools.is_empty() {
+                body["tools"] = api_tools.into();
+            }
+
+            let budget = self.thinking.budget();
+            if budget > 0 {
+                body["thinking"] = serde_json::json!({"type": "enabled", "budget_tokens": budget});
+            }
+
+            let auth_header = format!("Bearer {}", self.api_key);
+            let headers = [("Authorization", auth_header.as_str())];
+
+            let mut text = String::new();
+            let mut tool_map: HashMap<u64, (String, String, String)> = HashMap::new();
+            let mut usage = Usage::default();
+
+            let tx_ref = &tx;
+            let usage_ref = &mut usage;
+            post_sse(
+                &format!("{}/chat/completions", self.base_url),
+                &headers,
+                &body,
+                &cancel,
+                |event: SseEvent| {
+                    let delta = &event.data["choices"][0]["delta"];
+                    if delta.is_null() {
+                        return;
+                    }
+
+                    if let Some(t) = delta["reasoning_content"].as_str()
+                        && !t.is_empty()
+                    {
+                        let _ = tx_ref.try_send(Event::Thinking(t.to_owned()));
+                    }
+
+                    if let Some(t) = delta["content"].as_str()
+                        && !t.is_empty()
+                    {
+                        text.push_str(t);
+                        let _ = tx_ref.try_send(Event::Token(t.to_owned()));
+                    }
+
+                    if let Some(tcs) = delta["tool_calls"].as_array() {
+                        for tc in tcs {
+                            let idx = tc["index"].as_u64().unwrap_or(0);
+                            let entry = tool_map
+                                .entry(idx)
+                                .or_insert_with(|| (String::new(), String::new(), String::new()));
+                            if let Some(id) = tc["id"].as_str() {
+                                entry.0 = id.to_owned();
+                            }
+                            if let Some(name) = tc["function"]["name"].as_str() {
+                                entry.1 = name.to_owned();
+                            }
+                            if let Some(args) = tc["function"]["arguments"].as_str() {
+                                entry.2.push_str(args);
+                            }
+                        }
+                    }
+
+                    if let Some(u) = event.data["usage"].as_object() {
+                        let cached = u
+                            .get("prompt_tokens_details")
+                            .and_then(|d| d.get("cached_tokens"))
+                            .and_then(|v| v.as_u64());
+                        let prompt = u.get("prompt_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
+                        // OpenAI prompt_tokens includes cached — subtract to match Claude semantics
+                        let non_cached = prompt.saturating_sub(cached.unwrap_or(0));
+                        let u_data = Usage {
+                            input_tokens: non_cached,
+                            output_tokens: u
+                                .get("completion_tokens")
+                                .and_then(|v| v.as_u64())
+                                .unwrap_or(0),
+                            cache_read: cached,
+                            cache_write: None,
+                        };
+                        *usage_ref = u_data.clone();
+                        let _ = tx_ref.try_send(Event::Usage(u_data));
+                    }
+                },
+            )
+            .await?;
+
+            let tool_calls: Vec<ToolCall> = tool_map
+                .into_values()
+                .map(|(id, name, args)| ToolCall {
+                    id,
+                    r#type: "function".into(),
+                    function: ToolCallFunction {
+                        name,
+                        arguments: args,
+                    },
+                })
+                .collect();
+
+            let mut msg = Message::assistant(text);
+            if !tool_calls.is_empty() {
+                msg.tool_calls = Some(tool_calls);
+            }
+            Ok((msg, usage))
+        })
     }
 }
 
@@ -158,25 +187,34 @@ fn to_api_messages(
     messages: &[Message],
     resolve: &crate::core::provider::ImageResolver,
 ) -> Vec<serde_json::Value> {
-    messages.iter().map(|msg| {
-        match msg.role {
+    messages
+        .iter()
+        .map(|msg| match msg.role {
             Role::System => serde_json::json!({"role": "system", "content": msg.text()}),
             Role::User => {
                 if msg.has_images() {
-                    let content: Vec<serde_json::Value> = msg.content.iter().filter_map(|b| match b {
-                        ContentBlock::Text { text } | ContentBlock::Paste { text } if !text.is_empty() => {
-                            Some(serde_json::json!({"type": "text", "text": text}))
-                        }
-                        ContentBlock::Image { media_type, id } => {
-                            let data = resolve(id);
-                            if data.is_empty() { return None; }
-                            Some(serde_json::json!({
-                                "type": "image_url",
-                                "image_url": {"url": format!("data:{media_type};base64,{data}")}
-                            }))
-                        }
-                        _ => None,
-                    }).collect();
+                    let content: Vec<serde_json::Value> = msg
+                        .content
+                        .iter()
+                        .filter_map(|b| match b {
+                            ContentBlock::Text { text } | ContentBlock::Paste { text }
+                                if !text.is_empty() =>
+                            {
+                                Some(serde_json::json!({"type": "text", "text": text}))
+                            }
+                            ContentBlock::Image { media_type, id } => {
+                                let data = resolve(id);
+                                if data.is_empty() {
+                                    return None;
+                                }
+                                Some(serde_json::json!({
+                                    "type": "image_url",
+                                    "image_url": {"url": format!("data:{media_type};base64,{data}")}
+                                }))
+                            }
+                            _ => None,
+                        })
+                        .collect();
                     serde_json::json!({"role": "user", "content": content})
                 } else {
                     serde_json::json!({"role": "user", "content": msg.text()})
@@ -198,17 +236,22 @@ fn to_api_messages(
                 "content": msg.text(),
                 "tool_call_id": msg.tool_call_id.as_deref().unwrap_or("")
             }),
-        }
-    }).collect()
+        })
+        .collect()
 }
 
 fn to_api_tools(tools: &[ToolSchema]) -> Vec<serde_json::Value> {
-    tools.iter().map(|t| serde_json::json!({
-        "type": "function",
-        "function": {
-            "name": t.name,
-            "description": t.description,
-            "parameters": t.parameters,
-        }
-    })).collect()
+    tools
+        .iter()
+        .map(|t| {
+            serde_json::json!({
+                "type": "function",
+                "function": {
+                    "name": t.name,
+                    "description": t.description,
+                    "parameters": t.parameters,
+                }
+            })
+        })
+        .collect()
 }

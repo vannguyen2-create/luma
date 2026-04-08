@@ -1,5 +1,5 @@
 /// Word-aware line wrapping with char_width support.
-use super::{char_width, display_width, Line, Rgb, Span};
+use super::{Line, Rgb, Span, char_width, display_width};
 use smallvec::SmallVec;
 
 /// Wrap a line at `width`, breaking at word boundaries.

@@ -1,17 +1,12 @@
 //! Command safety checks for the bash tool.
 
 /// Dangerous command patterns — checked as substrings.
-const DANGEROUS_SUBSTR: &[&str] = &[
-    "rm --no-preserve-root",
-    "git reset --hard",
-];
+const DANGEROUS_SUBSTR: &[&str] = &["rm --no-preserve-root", "git reset --hard"];
 
 /// Dangerous targets for recursive-force `rm`.
 const DANGEROUS_RM_TARGETS: &[&str] = &[
-    "/", "/*", "~", "$HOME",
-    "/bin", "/boot", "/dev", "/etc", "/home", "/lib", "/lib64",
-    "/proc", "/root", "/sbin", "/sys", "/usr", "/var",
-    "/opt", "/srv", "/tmp",
+    "/", "/*", "~", "$HOME", "/bin", "/boot", "/dev", "/etc", "/home", "/lib", "/lib64", "/proc",
+    "/root", "/sbin", "/sys", "/usr", "/var", "/opt", "/srv", "/tmp",
 ];
 
 /// Dangerous base commands — matched only at command position.
@@ -32,9 +27,10 @@ pub fn is_dangerous_cmd(command: &str) -> bool {
             let tokens: Vec<&str> = part.split_whitespace().collect();
             let cmd_start = skip_wrappers(&tokens);
             let base = tokens.get(cmd_start).copied().unwrap_or("");
-            if DANGEROUS_CMDS.iter().any(|&cmd| {
-                base == cmd || base.starts_with(&format!("{cmd}."))
-            }) {
+            if DANGEROUS_CMDS
+                .iter()
+                .any(|&cmd| base == cmd || base.starts_with(&format!("{cmd}.")))
+            {
                 return true;
             }
             if is_dangerous_rm(&tokens, cmd_start) {
@@ -70,7 +66,8 @@ fn skip_wrappers(tokens: &[&str]) -> usize {
             while i < tokens.len() && tokens[i].starts_with('-') {
                 i += 1;
                 // Skip flag value if it's not another flag (e.g. -u root)
-                if i < tokens.len() && !tokens[i].starts_with('-')
+                if i < tokens.len()
+                    && !tokens[i].starts_with('-')
                     && !tokens[i].contains('=')
                     && !is_known_command(tokens[i])
                 {
@@ -86,13 +83,17 @@ fn skip_wrappers(tokens: &[&str]) -> usize {
 
 /// Heuristic: is this token likely a command name (not a flag value).
 fn is_known_command(token: &str) -> bool {
-    matches!(token, "rm" | "dd" | "mkfs" | "chmod" | "chown"
-        | "git" | "bash" | "sh" | "zsh" | "mv" | "cp")
+    matches!(
+        token,
+        "rm" | "dd" | "mkfs" | "chmod" | "chown" | "git" | "bash" | "sh" | "zsh" | "mv" | "cp"
+    )
 }
 
 /// Detect `rm` with both recursive and force flags targeting dangerous paths.
 fn is_dangerous_rm(tokens: &[&str], cmd_start: usize) -> bool {
-    if tokens.get(cmd_start).copied() != Some("rm") { return false; }
+    if tokens.get(cmd_start).copied() != Some("rm") {
+        return false;
+    }
 
     let args = &tokens[cmd_start + 1..];
     let mut has_recursive = false;
@@ -100,8 +101,12 @@ fn is_dangerous_rm(tokens: &[&str], cmd_start: usize) -> bool {
 
     for arg in args {
         if arg.starts_with('-') && !arg.starts_with("--") {
-            if arg.contains('r') || arg.contains('R') { has_recursive = true; }
-            if arg.contains('f') { has_force = true; }
+            if arg.contains('r') || arg.contains('R') {
+                has_recursive = true;
+            }
+            if arg.contains('f') {
+                has_force = true;
+            }
         } else if *arg == "--recursive" {
             has_recursive = true;
         } else if *arg == "--force" {
@@ -109,11 +114,17 @@ fn is_dangerous_rm(tokens: &[&str], cmd_start: usize) -> bool {
         }
     }
 
-    if !(has_recursive && has_force) { return false; }
+    if !(has_recursive && has_force) {
+        return false;
+    }
 
     for arg in args {
-        if arg.starts_with('-') { continue; }
-        if is_dangerous_path(arg) { return true; }
+        if arg.starts_with('-') {
+            continue;
+        }
+        if is_dangerous_path(arg) {
+            return true;
+        }
     }
     false
 }
@@ -121,20 +132,26 @@ fn is_dangerous_rm(tokens: &[&str], cmd_start: usize) -> bool {
 /// Check if a path targets a dangerous location.
 fn is_dangerous_path(arg: &str) -> bool {
     let normalized = arg.trim_end_matches('/');
-    let check = if normalized.is_empty() { "/" } else { normalized };
+    let check = if normalized.is_empty() {
+        "/"
+    } else {
+        normalized
+    };
     DANGEROUS_RM_TARGETS.iter().any(|&t| {
         let t_norm = t.trim_end_matches('/');
         let t_check = if t_norm.is_empty() { "/" } else { t_norm };
-        check == t_check
-            || *arg == format!("{t}*")
-            || *arg == format!("{t}/*")
+        check == t_check || *arg == format!("{t}*") || *arg == format!("{t}/*")
     })
 }
 
 /// Detect `git push --force` / `git push -f` but allow `--force-with-lease`.
 fn is_dangerous_git_push(tokens: &[&str], cmd_start: usize) -> bool {
-    if tokens.get(cmd_start).copied() != Some("git") { return false; }
-    if tokens.get(cmd_start + 1).copied() != Some("push") { return false; }
+    if tokens.get(cmd_start).copied() != Some("git") {
+        return false;
+    }
+    if tokens.get(cmd_start + 1).copied() != Some("push") {
+        return false;
+    }
 
     let args = &tokens[cmd_start + 2..];
     for arg in args {
@@ -149,7 +166,9 @@ fn is_dangerous_git_push(tokens: &[&str], cmd_start: usize) -> bool {
 /// Detect `bash -c "rm -rf /"` style wrappers that embed dangerous commands.
 fn is_shell_wrapper_bypass(tokens: &[&str], cmd_start: usize) -> bool {
     let base = tokens.get(cmd_start).copied().unwrap_or("");
-    if !matches!(base, "bash" | "sh" | "zsh") { return false; }
+    if !matches!(base, "bash" | "sh" | "zsh") {
+        return false;
+    }
 
     let args = &tokens[cmd_start + 1..];
     for (i, arg) in args.iter().enumerate() {
@@ -170,19 +189,28 @@ fn is_shell_wrapper_bypass(tokens: &[&str], cmd_start: usize) -> bool {
 /// Detect `chmod -R 000 /` or `chown -R nobody:nogroup /` on dangerous paths.
 fn is_dangerous_chmod_chown(tokens: &[&str], cmd_start: usize) -> bool {
     let base = tokens.get(cmd_start).copied().unwrap_or("");
-    if !matches!(base, "chmod" | "chown") { return false; }
+    if !matches!(base, "chmod" | "chown") {
+        return false;
+    }
 
     let args = &tokens[cmd_start + 1..];
     let has_recursive = args.iter().any(|a| {
-        *a == "-R" || *a == "--recursive"
+        *a == "-R"
+            || *a == "--recursive"
             || (a.starts_with('-') && !a.starts_with("--") && a.contains('R'))
     });
-    if !has_recursive { return false; }
+    if !has_recursive {
+        return false;
+    }
 
     // Check non-flag args for dangerous paths (skip the mode/owner arg)
     for arg in args {
-        if arg.starts_with('-') { continue; }
-        if is_dangerous_path(arg) { return true; }
+        if arg.starts_with('-') {
+            continue;
+        }
+        if is_dangerous_path(arg) {
+            return true;
+        }
     }
     false
 }

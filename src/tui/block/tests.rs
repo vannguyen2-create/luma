@@ -1,5 +1,5 @@
 use super::diff::diff_line_lang;
-use super::render::{render_block, RenderState};
+use super::render::{RenderState, render_block};
 use super::*;
 use crate::tui::stream::StreamBuf;
 use crate::tui::text::ScreenBuffer;

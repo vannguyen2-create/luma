@@ -1,5 +1,5 @@
 /// Layout — render blocks into cached lines, provide windowed access.
-use crate::tui::block::{render_block, Block, RenderState, Snapshot};
+use crate::tui::block::{Block, RenderState, Snapshot, render_block};
 use crate::tui::text::Line;
 
 struct Slot {
@@ -63,8 +63,7 @@ impl Layout {
             let mut state = RenderState::new();
             if let Some(block) = blocks.get(i) {
                 let snap = block.snapshot();
-                let rendered =
-                    render_block(block, &mut state, self.width, self.spinner_frame);
+                let rendered = render_block(block, &mut state, self.width, self.spinner_frame);
                 self.slots.push(Slot {
                     lines: rendered,
                     snap: Some(snap),

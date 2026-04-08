@@ -1,6 +1,6 @@
 /// ScreenBuffer — 2D cell grid with line writing and per-row hashing.
-use super::cell::{render_cells_ansi, Cell};
-use super::{char_width, CellFlag, Line, Rgb, Span};
+use super::cell::{Cell, render_cells_ansi};
+use super::{CellFlag, Line, Rgb, Span, char_width};
 use std::iter::Peekable;
 use std::str::Chars;
 

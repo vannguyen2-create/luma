@@ -1,5 +1,5 @@
 /// Diff line rendering and helpers shared across block types.
-use crate::tool::diff::{parse_diff_line, DiffKind};
+use crate::tool::diff::{DiffKind, parse_diff_line};
 use crate::tui::markdown::highlight::highlight_code_with_lang;
 use crate::tui::text::{Line, Span};
 use crate::tui::theme::palette;

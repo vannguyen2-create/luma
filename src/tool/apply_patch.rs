@@ -1,7 +1,7 @@
 /// apply_patch tool — Codex-compatible patch format for Deep mode.
 mod parse;
 
-use parse::{seek_context, seek_sequence, Hunk};
+use parse::{Hunk, seek_context, seek_sequence};
 
 use crate::core::tool::Tool;
 use crate::core::types::ToolSchema;
@@ -15,7 +15,9 @@ use tokio_util::sync::CancellationToken;
 pub struct ApplyPatchTool;
 
 impl Tool for ApplyPatchTool {
-    fn name(&self) -> &str { "apply_patch" }
+    fn name(&self) -> &str {
+        "apply_patch"
+    }
 
     fn schema(&self) -> ToolSchema {
         ToolSchema {
@@ -34,7 +36,8 @@ impl Tool for ApplyPatchTool {
                 "*** End Patch\n",
                 "Use 3 lines of context before/after changes. ",
                 "Use @@ class/function for disambiguation.",
-            ).to_owned(),
+            )
+            .to_owned(),
             parameters: serde_json::json!({
                 "type": "object",
                 "properties": {
@@ -85,11 +88,14 @@ async fn apply_hunks(hunks: &[Hunk], tx: &mpsc::Sender<String>) -> Result<String
                 let _ = tx.send(msg.clone()).await;
                 summary.push(msg);
             }
-            Hunk::Update { path, move_to, chunks } => {
+            Hunk::Update {
+                path,
+                move_to,
+                chunks,
+            } => {
                 let abs = resolve_path(path);
                 let content = std::fs::read_to_string(&abs)?;
-                let mut lines: Vec<String> =
-                    content.lines().map(|l| l.to_owned()).collect();
+                let mut lines: Vec<String> = content.lines().map(|l| l.to_owned()).collect();
 
                 let mut replacements: Vec<(usize, usize, Vec<String>)> = Vec::new();
                 let mut line_idx = 0;
@@ -101,13 +107,9 @@ async fn apply_hunks(hunks: &[Hunk], tx: &mpsc::Sender<String>) -> Result<String
                     } else {
                         line_idx
                     };
-                    let found = seek_sequence(
-                        &lines, &chunk.old_lines, search_from, chunk.is_eof,
-                    );
+                    let found = seek_sequence(&lines, &chunk.old_lines, search_from, chunk.is_eof);
                     if let Some(start) = found {
-                        replacements.push((
-                            start, chunk.old_lines.len(), chunk.new_lines.clone(),
-                        ));
+                        replacements.push((start, chunk.old_lines.len(), chunk.new_lines.clone()));
                         line_idx = start + chunk.old_lines.len();
                     } else {
                         anyhow::bail!(
@@ -121,7 +123,9 @@ async fn apply_hunks(hunks: &[Hunk], tx: &mpsc::Sender<String>) -> Result<String
                 replacements.sort_by_key(|r| std::cmp::Reverse(r.0));
                 for (start, old_len, new_lines) in &replacements {
                     for _ in 0..*old_len {
-                        if *start < lines.len() { lines.remove(*start); }
+                        if *start < lines.len() {
+                            lines.remove(*start);
+                        }
                     }
                     for (offset, line) in new_lines.iter().enumerate() {
                         lines.insert(start + offset, line.clone());
@@ -129,8 +133,10 @@ async fn apply_hunks(hunks: &[Hunk], tx: &mpsc::Sender<String>) -> Result<String
                 }
 
                 let new_content = lines.join("\n") + "\n";
-                let target = move_to.as_ref()
-                    .map(|p| resolve_path(p)).unwrap_or(abs.clone());
+                let target = move_to
+                    .as_ref()
+                    .map(|p| resolve_path(p))
+                    .unwrap_or(abs.clone());
 
                 if let Some(parent) = target.parent() {
                     std::fs::create_dir_all(parent)?;
@@ -149,12 +155,18 @@ async fn apply_hunks(hunks: &[Hunk], tx: &mpsc::Sender<String>) -> Result<String
         }
     }
 
-    Ok(format!("Success. Updated the following files:\n{}", summary.join("\n")))
+    Ok(format!(
+        "Success. Updated the following files:\n{}",
+        summary.join("\n")
+    ))
 }
 
 fn resolve_path(path: &Path) -> PathBuf {
-    if path.is_absolute() { path.to_owned() }
-    else { std::env::current_dir().unwrap_or_default().join(path) }
+    if path.is_absolute() {
+        path.to_owned()
+    } else {
+        std::env::current_dir().unwrap_or_default().join(path)
+    }
 }
 
 #[cfg(test)]

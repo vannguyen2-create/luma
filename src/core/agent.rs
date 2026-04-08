@@ -6,8 +6,8 @@ mod turn;
 pub use summary::format_tool_summary;
 
 use crate::core::registry::Registry;
-use crate::core::types::ContentBlock;
 use crate::core::session::Session;
+use crate::core::types::ContentBlock;
 use crate::core::types::{Message, Role, ThinkingLevel};
 use crate::event::{AgentCommand, Event};
 use tokio::sync::mpsc;
@@ -29,11 +29,11 @@ pub fn spawn(
     let (cmd_tx, cmd_rx) = mpsc::channel(16);
     let tx = event_tx.clone();
     tokio::spawn(async move {
-        let result = std::panic::AssertUnwindSafe(
-            agent_loop(config, registry, cmd_rx, event_tx)
-        );
+        let result = std::panic::AssertUnwindSafe(agent_loop(config, registry, cmd_rx, event_tx));
         if futures::FutureExt::catch_unwind(result).await.is_err() {
-            let _ = tx.send(Event::AgentError("agent task panicked".into())).await;
+            let _ = tx
+                .send(Event::AgentError("agent task panicked".into()))
+                .await;
         }
     });
     cmd_tx
@@ -48,12 +48,19 @@ async fn agent_loop(
     let mut session = Session::new();
 
     if !config.system_prompt.is_empty() {
-        session.messages.push(Message::system(config.system_prompt.clone()));
+        session
+            .messages
+            .push(Message::system(config.system_prompt.clone()));
     }
 
     while let Some(cmd) = cmd_rx.recv().await {
         match cmd {
-            AgentCommand::Chat { content, images, files, cancel } => {
+            AgentCommand::Chat {
+                content,
+                images,
+                files,
+                cancel,
+            } => {
                 let mut blocks = content;
                 for f in files {
                     let ext = std::path::Path::new(&f.path)
@@ -61,7 +68,10 @@ async fn agent_loop(
                         .and_then(|e| e.to_str())
                         .unwrap_or("");
                     blocks.push(ContentBlock::Text {
-                        text: format!("<file path=\"{}\">\n```{ext}\n{}\n```\n</file>", f.path, f.content),
+                        text: format!(
+                            "<file path=\"{}\">\n```{ext}\n{}\n```\n</file>",
+                            f.path, f.content
+                        ),
                     });
                 }
                 for img in images {
@@ -94,13 +104,17 @@ async fn agent_loop(
                 // Fix orphaned tool_use blocks left by aborted/errored turns.
                 fix_orphaned_tool_uses(&mut session.messages);
 
-                session.turn_durations.push(turn_start.elapsed().as_secs_f64());
+                session
+                    .turn_durations
+                    .push(turn_start.elapsed().as_secs_f64());
                 // Save after every turn — crash recovery preserves progress.
                 session.save();
                 crate::config::prefs::save_last_session(&session.id);
 
                 match result {
-                    Ok(_) => { let _ = event_tx.send(Event::AgentDone).await; }
+                    Ok(_) => {
+                        let _ = event_tx.send(Event::AgentDone).await;
+                    }
                     Err(e) => {
                         let msg = e.to_string();
                         if msg.contains("Aborted") {
@@ -118,16 +132,23 @@ async fn agent_loop(
                 session.save();
                 session = Session::new();
                 if !config.system_prompt.is_empty() {
-                    session.messages.push(Message::system(config.system_prompt.clone()));
+                    session
+                        .messages
+                        .push(Message::system(config.system_prompt.clone()));
                 }
             }
             AgentCommand::LoadSession { session: loaded } => {
                 session.save();
                 session = loaded;
                 if !config.system_prompt.is_empty()
-                    && !session.messages.first().is_some_and(|m| m.role == crate::core::types::Role::System)
+                    && !session
+                        .messages
+                        .first()
+                        .is_some_and(|m| m.role == crate::core::types::Role::System)
                 {
-                    session.messages.insert(0, Message::system(config.system_prompt.clone()));
+                    session
+                        .messages
+                        .insert(0, Message::system(config.system_prompt.clone()));
                 }
             }
             AgentCommand::SetModel { model_id, source } => {

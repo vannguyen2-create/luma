@@ -1,6 +1,6 @@
+use super::SkillBlock;
 /// Chrome renders — user prompt, skill, thinking, wrap helpers.
 use super::render::RenderState;
-use super::SkillBlock;
 use crate::tui::markdown::parse_inline;
 use crate::tui::stream::StreamBuf;
 use crate::tui::text::{Line, Span};

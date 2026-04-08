@@ -1,6 +1,6 @@
 /// Syntax highlighting for code blocks — lightweight language-aware coloring.
 use crate::tui::text::Span;
-use crate::tui::theme::{palette, Rgb};
+use crate::tui::theme::{Rgb, palette};
 use smallvec::SmallVec;
 
 const COLOR_KEYWORD: Rgb = Rgb(198, 160, 246);
@@ -500,32 +500,42 @@ mod tests {
     #[test]
     fn highlight_rust_raw_string_and_operator() {
         let spans = highlight_code_with_lang("let x = r#\"hi\"#;", Some("rust"));
-        assert!(spans
-            .iter()
-            .any(|s| s.text == "=" && s.fg == COLOR_OPERATOR_RUST));
-        assert!(spans
-            .iter()
-            .any(|s| s.text == "r#\"hi\"#" && s.fg == COLOR_STRING));
+        assert!(
+            spans
+                .iter()
+                .any(|s| s.text == "=" && s.fg == COLOR_OPERATOR_RUST)
+        );
+        assert!(
+            spans
+                .iter()
+                .any(|s| s.text == "r#\"hi\"#" && s.fg == COLOR_STRING)
+        );
     }
 
     #[test]
     fn highlight_python_comment_and_operator() {
         let spans = highlight_code_with_lang("value ** 2 # square", Some("python"));
-        assert!(spans
-            .iter()
-            .any(|s| s.text == "**" && s.fg == COLOR_OPERATOR_PY));
+        assert!(
+            spans
+                .iter()
+                .any(|s| s.text == "**" && s.fg == COLOR_OPERATOR_PY)
+        );
         assert!(spans.iter().any(|s| s.text == "# square" && s.italic));
     }
 
     #[test]
     fn highlight_js_template_and_operator() {
         let spans = highlight_code_with_lang("const msg = `hi`;", Some("js"));
-        assert!(spans
-            .iter()
-            .any(|s| s.text == "=" && s.fg == COLOR_OPERATOR_JS));
-        assert!(spans
-            .iter()
-            .any(|s| s.text == "`hi`" && s.fg == COLOR_STRING));
+        assert!(
+            spans
+                .iter()
+                .any(|s| s.text == "=" && s.fg == COLOR_OPERATOR_JS)
+        );
+        assert!(
+            spans
+                .iter()
+                .any(|s| s.text == "`hi`" && s.fg == COLOR_STRING)
+        );
     }
 
     #[test]

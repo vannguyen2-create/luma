@@ -1,8 +1,8 @@
+use super::Block;
 /// Block render dispatch — single entry point for all block types.
-use super::chrome::{render_skill, render_thinking, render_user, ThinkingCache};
+use super::chrome::{ThinkingCache, render_skill, render_thinking, render_user};
 use super::text::TextCache;
 use super::tool::render_tool;
-use super::Block;
 use crate::tui::text::{Line, Span};
 use crate::tui::theme::palette;
 use smallvec::smallvec;

@@ -31,7 +31,17 @@ pub async fn run_chat_turn(
     let auth = auth::resolve(provider_kind).await?;
     let provider = build_provider(config, &auth, session_id);
 
-    match run_turn(messages, &*provider, registry, session_id, session_usage, tx, cancel.clone()).await {
+    match run_turn(
+        messages,
+        &*provider,
+        registry,
+        session_id,
+        session_usage,
+        tx,
+        cancel.clone(),
+    )
+    .await
+    {
         Ok(()) => Ok(()),
         Err(e) if e.to_string().contains("401") || e.to_string().contains("Unauthorized") => {
             let _ = tx
@@ -43,7 +53,16 @@ pub async fn run_chat_turn(
             auth::clear_cached(provider_kind);
             let auth = auth::resolve(provider_kind).await?;
             let provider = build_provider(config, &auth, session_id);
-            run_turn(messages, &*provider, registry, session_id, session_usage, tx, cancel).await
+            run_turn(
+                messages,
+                &*provider,
+                registry,
+                session_id,
+                session_usage,
+                tx,
+                cancel,
+            )
+            .await
         }
         Err(e) => Err(e),
     }
@@ -66,7 +85,10 @@ fn build_provider(
         }
         "codex" => {
             let mut p = CodexProvider::new(
-                &config.model_id, &auth.token, auth.account_id.clone(), session_id,
+                &config.model_id,
+                &auth.token,
+                auth.account_id.clone(),
+                session_id,
             );
             p.set_thinking(config.thinking);
             Box::new(p)
@@ -94,10 +116,19 @@ async fn run_turn(
     let resolve_image = crate::core::session::image_resolver(session_id);
 
     for _ in 0..MAX_ITERATIONS {
-        if cancel.is_cancelled() { anyhow::bail!("Aborted"); }
+        if cancel.is_cancelled() {
+            anyhow::bail!("Aborted");
+        }
 
         let (response, usage) = provider
-            .stream(messages, &schemas, &server_schemas, &*resolve_image, tx.clone(), cancel.clone())
+            .stream(
+                messages,
+                &schemas,
+                &server_schemas,
+                &*resolve_image,
+                tx.clone(),
+                cancel.clone(),
+            )
             .await?;
 
         session_usage.input_tokens += usage.input_tokens;
@@ -107,7 +138,9 @@ async fn run_turn(
 
         messages.push(response.clone());
 
-        if cancel.is_cancelled() { anyhow::bail!("Aborted"); }
+        if cancel.is_cancelled() {
+            anyhow::bail!("Aborted");
+        }
 
         let tool_calls = match &response.tool_calls {
             Some(tcs) if !tcs.is_empty() => tcs.clone(),
@@ -127,16 +160,22 @@ async fn run_turn(
             messages.push(Message::tool(tc_id, truncated));
         }
 
-        if aborted { anyhow::bail!("Aborted"); }
+        if aborted {
+            anyhow::bail!("Aborted");
+        }
     }
     Ok(())
 }
 
 /// Check if a read tool call targets a SKILL.md file.
 fn skill_name_from_read(tool_name: &str, args: &serde_json::Value) -> Option<String> {
-    if tool_name != "read" { return None; }
+    if tool_name != "read" {
+        return None;
+    }
     let path = args.get("path")?.as_str()?;
-    if !path.ends_with("SKILL.md") { return None; }
+    if !path.ends_with("SKILL.md") {
+        return None;
+    }
     // Extract skill name from parent directory
     std::path::Path::new(path)
         .parent()
@@ -163,14 +202,24 @@ async fn execute_one(
             }
 
             let summary = format_tool_summary(&tc.function.name, &args);
-            let _ = tx.send(Event::ToolStart { name: tc.function.name.clone(), summary }).await;
+            let _ = tx
+                .send(Event::ToolStart {
+                    name: tc.function.name.clone(),
+                    summary,
+                })
+                .await;
 
             let (output_tx, mut output_rx) = mpsc::channel::<String>(64);
             let tx_fwd = tx.clone();
             let tool_name = tc.function.name.clone();
             let fwd_handle = tokio::spawn(async move {
                 while let Some(chunk) = output_rx.recv().await {
-                    let _ = tx_fwd.send(Event::ToolOutput { name: tool_name.clone(), chunk }).await;
+                    let _ = tx_fwd
+                        .send(Event::ToolOutput {
+                            name: tool_name.clone(),
+                            chunk,
+                        })
+                        .await;
                 }
             });
 
@@ -180,7 +229,12 @@ async fn execute_one(
             match res {
                 Ok(r) => {
                     let end_summary = format_tool_result(&tc.function.name, &r);
-                    let _ = tx.send(Event::ToolEnd { name: tc.function.name.clone(), summary: end_summary }).await;
+                    let _ = tx
+                        .send(Event::ToolEnd {
+                            name: tc.function.name.clone(),
+                            summary: end_summary,
+                        })
+                        .await;
                     if let Some(name) = &skill {
                         let _ = tx.send(Event::SkillEnd(format!("loaded {name}"))).await;
                     }
@@ -188,9 +242,16 @@ async fn execute_one(
                 }
                 Err(e) => {
                     let msg = format!("Error: {e}");
-                    let _ = tx.send(Event::ToolEnd { name: tc.function.name.clone(), summary: msg.clone() }).await;
+                    let _ = tx
+                        .send(Event::ToolEnd {
+                            name: tc.function.name.clone(),
+                            summary: msg.clone(),
+                        })
+                        .await;
                     if let Some(name) = &skill {
-                        let _ = tx.send(Event::SkillEnd(format!("failed to load {name}"))).await;
+                        let _ = tx
+                            .send(Event::SkillEnd(format!("failed to load {name}")))
+                            .await;
                     }
                     msg
                 }
@@ -229,20 +290,28 @@ mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
     use tokio_util::sync::CancellationToken;
 
-    struct SlowTool { counter: &'static AtomicUsize }
+    struct SlowTool {
+        counter: &'static AtomicUsize,
+    }
 
     impl Tool for SlowTool {
-        fn name(&self) -> &str { "slow" }
+        fn name(&self) -> &str {
+            "slow"
+        }
         fn schema(&self) -> crate::core::types::ToolSchema {
             crate::core::types::ToolSchema {
-                name: "slow".into(), description: "test".into(),
+                name: "slow".into(),
+                description: "test".into(),
                 parameters: serde_json::json!({}),
             }
         }
         fn execute(
-            &self, _args: serde_json::Value, _output_tx: mpsc::Sender<String>,
+            &self,
+            _args: serde_json::Value,
+            _output_tx: mpsc::Sender<String>,
             _cancel: CancellationToken,
-        ) -> Pin<Box<dyn std::future::Future<Output = anyhow::Result<String>> + Send + '_>> {
+        ) -> Pin<Box<dyn std::future::Future<Output = anyhow::Result<String>> + Send + '_>>
+        {
             let counter = self.counter;
             Box::pin(async move {
                 counter.fetch_add(1, Ordering::SeqCst);
@@ -265,15 +334,19 @@ mod tests {
 
         let calls = vec![
             ToolCall {
-                id: "tc_1".into(), r#type: "function".into(),
+                id: "tc_1".into(),
+                r#type: "function".into(),
                 function: crate::core::types::ToolCallFunction {
-                    name: "slow".into(), arguments: "{}".into(),
+                    name: "slow".into(),
+                    arguments: "{}".into(),
                 },
             },
             ToolCall {
-                id: "tc_2".into(), r#type: "function".into(),
+                id: "tc_2".into(),
+                r#type: "function".into(),
                 function: crate::core::types::ToolCallFunction {
-                    name: "slow".into(), arguments: "{}".into(),
+                    name: "slow".into(),
+                    arguments: "{}".into(),
                 },
             },
         ];
@@ -285,6 +358,10 @@ mod tests {
         assert_eq!(results.len(), 2);
         assert_eq!(results[0].0, "tc_1");
         assert_eq!(results[1].0, "tc_2");
-        assert!(elapsed.as_millis() < 100, "took {}ms, expected parallel", elapsed.as_millis());
+        assert!(
+            elapsed.as_millis() < 100,
+            "took {}ms, expected parallel",
+            elapsed.as_millis()
+        );
     }
 }

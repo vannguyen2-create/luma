@@ -1,7 +1,7 @@
 /// Status bar — mode, model, thinking level, context usage, spinner.
 use crate::tui::text::{Line, Span};
-use crate::tui::theme::{icon, palette, Rgb};
-use smallvec::{smallvec, SmallVec};
+use crate::tui::theme::{Rgb, icon, palette};
+use smallvec::{SmallVec, smallvec};
 
 /// Status bar display state.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

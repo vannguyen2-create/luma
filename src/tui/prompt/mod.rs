@@ -108,8 +108,7 @@ impl PromptState {
                 if let Some(at_pos) = before.rfind('@') {
                     let after: String = text.chars().skip(gpos).collect();
                     let new = format!("{}@{} {}", &before[..at_pos], path, after);
-                    let new_pos =
-                        before[..at_pos].chars().count() + 1 + path.chars().count() + 1;
+                    let new_pos = before[..at_pos].chars().count() + 1 + path.chars().count() + 1;
                     self.buf.set_text(&new);
                     self.buf.pos = new_pos;
                 }
@@ -134,8 +133,7 @@ impl PromptState {
                 if let Some(at_pos) = before.rfind('@') {
                     let after: String = text.chars().skip(gpos).collect();
                     let new = format!("{}@{}{}", &before[..at_pos], path, after);
-                    let new_pos =
-                        before[..at_pos].chars().count() + 1 + path.chars().count();
+                    let new_pos = before[..at_pos].chars().count() + 1 + path.chars().count();
                     self.buf.set_text(&new);
                     self.buf.pos = new_pos;
                 }
@@ -250,7 +248,10 @@ mod tests {
     #[test]
     fn empty_enter_no_submit() {
         let mut p = PromptState::new();
-        assert!(matches!(p.handle_key(&key(KeyCode::Enter)), PromptAction::Redraw));
+        assert!(matches!(
+            p.handle_key(&key(KeyCode::Enter)),
+            PromptAction::Redraw
+        ));
     }
 
     #[test]
@@ -311,7 +312,11 @@ mod tests {
         type_str(&mut p, "fix: ");
         p.handle_paste("1\n2\n3\n4\n5".into());
         let content = p.buf.to_content();
-        assert!(content.iter().any(|b| matches!(b, crate::core::types::ContentBlock::Paste { .. })));
+        assert!(
+            content
+                .iter()
+                .any(|b| matches!(b, crate::core::types::ContentBlock::Paste { .. }))
+        );
     }
 
     #[test]
