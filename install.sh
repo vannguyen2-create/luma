@@ -65,12 +65,36 @@ chmod +x "$INSTALL_DIR/luma${EXT}" 2>/dev/null || true
 
 echo "Installed luma $TAG"
 
-# Check PATH
+# Add to PATH if missing
 case ":$PATH:" in
   *":$INSTALL_DIR:"*) ;;
   *)
-    echo ""
-    echo "Add to your shell profile:"
-    echo "  export PATH=\"$INSTALL_DIR:\$PATH\""
+    LINE="export PATH=\"$INSTALL_DIR:\$PATH\""
+    PROFILE=""
+    case "${SHELL:-}" in
+      */zsh)  PROFILE="$HOME/.zshrc" ;;
+      */bash) PROFILE="$HOME/.bashrc" ;;
+      */fish) PROFILE="$HOME/.config/fish/config.fish" ;;
+    esac
+    # Fallback: check common files
+    if [ -z "$PROFILE" ]; then
+      for f in "$HOME/.zshrc" "$HOME/.bashrc" "$HOME/.profile"; do
+        [ -f "$f" ] && PROFILE="$f" && break
+      done
+    fi
+
+    if [ -n "$PROFILE" ] && ! grep -qF "$INSTALL_DIR" "$PROFILE" 2>/dev/null; then
+      mkdir -p "$(dirname "$PROFILE")"
+      if echo "$PROFILE" | grep -q "fish"; then
+        echo "fish_add_path $INSTALL_DIR" >> "$PROFILE"
+      else
+        echo "$LINE" >> "$PROFILE"
+      fi
+      echo "Added to $PROFILE — restart shell or run:"
+    else
+      echo ""
+      echo "Run this to use now:"
+    fi
+    echo "  $LINE"
     ;;
 esac

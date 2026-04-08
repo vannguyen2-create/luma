@@ -40,9 +40,13 @@ try {
     Remove-Item -Recurse -Force $Tmp -ErrorAction SilentlyContinue
 }
 
-# Check PATH
+# Add to PATH if missing
 if ($env:PATH -notlike "*$InstallDir*") {
-    Write-Host ''
-    Write-Host 'Add to your PATH (run once):'
-    Write-Host "  [Environment]::SetEnvironmentVariable('PATH', `"$InstallDir;`" + [Environment]::GetEnvironmentVariable('PATH', 'User'), 'User')"
+    $UserPath = [Environment]::GetEnvironmentVariable('PATH', 'User')
+    if ($UserPath -notlike "*$InstallDir*") {
+        [Environment]::SetEnvironmentVariable('PATH', "$InstallDir;$UserPath", 'User')
+        Write-Host "Added $InstallDir to user PATH"
+    }
+    $env:PATH = "$InstallDir;$env:PATH"
+    Write-Host 'Restart terminal or run:  $env:PATH = "$InstallDir;$env:PATH"'
 }

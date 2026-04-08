@@ -87,7 +87,8 @@ async fn main() {
     }
 }
 
-/// Self-update: download and run install.sh from repo.
+/// Self-update: download and run install script.
+#[cfg(unix)]
 fn self_update() -> anyhow::Result<()> {
     let current = env!("CARGO_PKG_VERSION");
     println!("current: v{current}");
@@ -95,6 +96,21 @@ fn self_update() -> anyhow::Result<()> {
     let status = Command::new("sh")
         .arg("-c")
         .arg("curl -fsSL https://raw.githubusercontent.com/nghyane/luma/master/install.sh | sh")
+        .status()?;
+    if !status.success() {
+        anyhow::bail!("install script failed");
+    }
+    Ok(())
+}
+
+#[cfg(windows)]
+fn self_update() -> anyhow::Result<()> {
+    let current = env!("CARGO_PKG_VERSION");
+    println!("current: v{current}");
+    println!("updating...");
+    let status = Command::new("powershell")
+        .args(["-NoProfile", "-Command",
+            "irm https://raw.githubusercontent.com/nghyane/luma/master/install.ps1 | iex"])
         .status()?;
     if !status.success() {
         anyhow::bail!("install script failed");
