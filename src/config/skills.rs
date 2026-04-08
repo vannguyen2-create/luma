@@ -117,7 +117,7 @@ fn parse_skill_md(path: &Path) -> Option<Skill> {
 }
 
 fn dirs() -> Option<PathBuf> {
-    std::env::var_os("HOME").map(PathBuf::from)
+    Some(super::home_dir())
 }
 
 #[cfg(test)]

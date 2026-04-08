@@ -103,9 +103,7 @@ fn managed_path() -> PathBuf {
 }
 
 fn dirs_home() -> PathBuf {
-    std::env::var("HOME")
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| PathBuf::from("/tmp"))
+    super::home_dir()
 }
 
 fn load_managed(provider: AuthProvider) -> Option<ManagedEntry> {

@@ -7,8 +7,7 @@ use std::fs;
 use std::path::PathBuf;
 
 fn prefs_path() -> PathBuf {
-    let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".into());
-    PathBuf::from(home)
+    super::home_dir()
         .join(".config")
         .join("luma")
         .join("preferences.json")

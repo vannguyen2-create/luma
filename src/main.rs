@@ -1,4 +1,4 @@
-/// Debug log to /tmp/luma.log — enabled by LUMA_DEBUG=1.
+/// Debug log to temp dir — enabled by LUMA_DEBUG=1.
 #[macro_export]
 macro_rules! dbg_log {
     ($($arg:tt)*) => {
@@ -6,7 +6,7 @@ macro_rules! dbg_log {
             use std::io::Write;
             if let Ok(mut f) = std::fs::OpenOptions::new()
                 .create(true).append(true)
-                .open("/tmp/luma.log")
+                .open(std::env::temp_dir().join("luma.log"))
             {
                 let _ = writeln!(f, "[{:.3}] {}",
                     std::time::SystemTime::now()

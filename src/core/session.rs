@@ -139,8 +139,7 @@ fn preview_text_n(text: &str, max: usize) -> String {
 }
 
 fn sessions_dir() -> PathBuf {
-    let home = std::env::var("HOME").unwrap_or_else(|_| ".".into());
-    PathBuf::from(home).join(".config/luma/sessions")
+    crate::config::home_dir().join(".config/luma/sessions")
 }
 
 /// Directory for storing session assets (images, etc).
