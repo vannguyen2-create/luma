@@ -33,7 +33,17 @@ try {
 
     # Install
     New-Item -ItemType Directory -Path $InstallDir -Force | Out-Null
-    Move-Item -Path "$Tmp\luma.exe" -Destination "$InstallDir\luma.exe" -Force
+    $Dest = "$InstallDir\luma.exe"
+    if (Test-Path $Dest) {
+        # The running binary may hold a lock; Windows allows renaming a locked file.
+        $Old = "$InstallDir\luma.exe.old"
+        if (Test-Path $Old) { Remove-Item -Force $Old -ErrorAction SilentlyContinue }
+        Rename-Item -Path $Dest -NewName 'luma.exe.old' -Force -ErrorAction SilentlyContinue
+    }
+    Move-Item -Path "$Tmp\luma.exe" -Destination $Dest -Force
+
+    # Clean up old binary (may fail if process still running; harmless)
+    Remove-Item -Force "$InstallDir\luma.exe.old" -ErrorAction SilentlyContinue
 
     Write-Host "Installed luma $Tag"
 } finally {
