@@ -272,7 +272,8 @@ impl super::App {
         if let Some(path) = extract_image_path(&text) {
             self.paste_image_file(&path);
         } else if self.ui.prompt.handle_paste(text).is_none() {
-            self.doc.warn("paste too large (>1 MB) — use a file reference instead");
+            self.doc
+                .warn("paste too large (>1 MB) — use a file reference instead");
         }
         Action::Render
     }

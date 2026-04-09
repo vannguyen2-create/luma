@@ -409,7 +409,10 @@ mod tests {
 
         maybe_store_tool_call(&mut tool_calls, Some(0), &item);
         let entry = tool_calls.get_mut(&0).unwrap();
-        entry.function.arguments.push_str("{\"command\":\"git status\"}");
+        entry
+            .function
+            .arguments
+            .push_str("{\"command\":\"git status\"}");
 
         assert_eq!(entry.id, "call_1");
         assert_eq!(entry.function.name, "exec_command");
@@ -434,5 +437,4 @@ mod tests {
         assert_eq!(entry.id, "call_2");
         assert_eq!(entry.function.arguments, "{\"command\":\"pwd\"}");
     }
-
 }

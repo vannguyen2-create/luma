@@ -215,9 +215,7 @@ fn format_provider_error(msg: &str) -> String {
 
 fn is_rate_limit_error(msg: &str) -> bool {
     let lower = msg.to_ascii_lowercase();
-    lower.contains("429")
-        || lower.contains("rate limit")
-        || lower.contains("too many requests")
+    lower.contains("429") || lower.contains("rate limit") || lower.contains("too many requests")
 }
 
 #[cfg(target_os = "macos")]

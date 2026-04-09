@@ -6,10 +6,7 @@ use tokio_util::sync::CancellationToken;
 
 const MAX_RETRIES: u8 = 4;
 const MAX_RETRY_DELAY_SECS: u64 = 30;
-const OPENAI_RESET_HEADERS: &[&str] = &[
-    "x-ratelimit-reset-requests",
-    "x-ratelimit-reset-tokens",
-];
+const OPENAI_RESET_HEADERS: &[&str] = &["x-ratelimit-reset-requests", "x-ratelimit-reset-tokens"];
 
 /// Format provider HTTP errors with clearer guidance for TUI.
 pub fn format_http_error(provider: &str, status: reqwest::StatusCode, msg: &str) -> String {
@@ -35,7 +32,11 @@ fn is_hard_quota_error(msg: &str) -> bool {
 }
 
 fn retry_after_secs(headers: &reqwest::header::HeaderMap) -> Option<u64> {
-    let value = headers.get(reqwest::header::RETRY_AFTER)?.to_str().ok()?.trim();
+    let value = headers
+        .get(reqwest::header::RETRY_AFTER)?
+        .to_str()
+        .ok()?
+        .trim();
     value
         .parse::<u64>()
         .ok()
@@ -134,12 +135,7 @@ fn jittered_backoff_secs(attempt: u8) -> u64 {
     jitter.max(1)
 }
 
-async fn send_retry_event(
-    tx: &mpsc::Sender<Event>,
-    provider: &str,
-    delay_secs: u64,
-    attempt: u8,
-) {
+async fn send_retry_event(tx: &mpsc::Sender<Event>, provider: &str, delay_secs: u64, attempt: u8) {
     let _ = tx
         .send(Event::ProviderRetry {
             provider: provider.to_owned(),
@@ -284,8 +280,7 @@ mod tests {
     fn format_http_date(secs: i64) -> String {
         const WEEKDAYS: [&str; 7] = ["Thu", "Fri", "Sat", "Sun", "Mon", "Tue", "Wed"];
         const MONTHS: [&str; 12] = [
-            "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct",
-            "Nov", "Dec",
+            "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
         ];
         let days = secs.div_euclid(86_400);
         let sod = secs.rem_euclid(86_400);

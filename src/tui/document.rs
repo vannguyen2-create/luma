@@ -96,7 +96,13 @@ impl Document {
         self.blocks.push(Block::Warn(text.to_owned()));
     }
 
-    pub fn provider_retry(&mut self, provider: &str, delay_secs: u64, attempt: u8, max_attempts: u8) {
+    pub fn provider_retry(
+        &mut self,
+        provider: &str,
+        delay_secs: u64,
+        attempt: u8,
+        max_attempts: u8,
+    ) {
         self.commit_last();
         self.blocks.push(Block::Warn(format!(
             "{provider} temporary throttling — retrying in {delay_secs}s (attempt {attempt}/{max_attempts})"
