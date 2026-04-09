@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0-beta.4] - 2026-04-08
+
+### Added
+- Provider retry events surfaced in TUI during temporary throttling
+- Shared provider retry module with backoff, jitter, and provider-aware guidance
+
+### Changed
+- Rate limit handling now distinguishes temporary throttling from hard quota exhaustion
+- Retry delay selection now prefers `Retry-After`, then OpenAI/Codex `x-ratelimit-reset-*`, then exponential backoff
+
+### Fixed
+- Claude, OpenAI, and Codex provider flows now surface clearer `429` guidance
+- OpenAI/Codex retry handling is consistent across providers
+
 ## [0.3.0-beta.3] - 2026-04-08
 
 ### Added
