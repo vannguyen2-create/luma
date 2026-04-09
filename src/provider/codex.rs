@@ -5,6 +5,7 @@ use crate::core::types::{
 };
 use crate::event::Event;
 use anyhow::{Result, bail};
+use std::collections::BTreeMap;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
@@ -110,39 +111,27 @@ impl Provider for CodexProvider {
             let client = reqwest::Client::builder()
                 .connect_timeout(std::time::Duration::from_secs(30))
                 .build()?;
-            let mut req = client
-                .post(CODEX_ENDPOINT)
-                .header("Content-Type", "application/json")
-                .header("Authorization", format!("Bearer {}", self.api_key))
-                .json(&body);
+            let response = crate::provider::retry::send_with_retry("codex", &tx, &cancel, || {
+                let mut req = client
+                    .post(CODEX_ENDPOINT)
+                    .header("Content-Type", "application/json")
+                    .header("Authorization", format!("Bearer {}", self.api_key))
+                    .json(&body);
 
-            if let Some(aid) = &self.account_id {
-                req = req.header("chatgpt-account-id", aid.as_str());
-            }
-
-            let response = req.send().await?;
-
-            if !response.status().is_success() {
-                let status = response.status();
-                let body = response.text().await.unwrap_or_default();
-                let msg = serde_json::from_str::<serde_json::Value>(&body)
-                    .ok()
-                    .and_then(|v| {
-                        v["error"]["message"]
-                            .as_str()
-                            .or(v["message"].as_str())
-                            .map(|s| s.to_owned())
-                    })
-                    .unwrap_or_else(|| body[..body.len().min(200)].to_owned());
-                bail!("{status}: {msg}");
-            }
+                if let Some(aid) = &self.account_id {
+                    req = req.header("chatgpt-account-id", aid.as_str());
+                }
+                req.send()
+            })
+            .await?;
 
             let mut text = String::new();
-            let mut tool_calls: Vec<ToolCall> = Vec::new();
+            let mut tool_calls: BTreeMap<u64, ToolCall> = BTreeMap::new();
             let mut buf = String::new();
             let mut usage = Usage::default();
             let mut response = response;
             let chunk_timeout = std::time::Duration::from_secs(120);
+            let mut saw_completed = false;
 
             loop {
                 let chunk = tokio::select! {
@@ -191,8 +180,35 @@ impl Provider for CodexProvider {
                             });
                         }
                         "response.web_search_call.searching" => {}
-                        // Web search done OR message done
-                        "response.output_item.done" => {
+                        "response.output_item.added" => {
+                            maybe_store_tool_call(
+                                &mut tool_calls,
+                                event["output_index"].as_u64(),
+                                &event["item"],
+                            );
+                        }
+                        "response.function_call_arguments.delta" => {
+                            if let Some(idx) = event["output_index"].as_u64()
+                                && let Some(delta) = event["delta"].as_str()
+                            {
+                                let entry = tool_calls.entry(idx).or_insert_with(|| ToolCall {
+                                    id: String::new(),
+                                    r#type: "function".into(),
+                                    function: ToolCallFunction {
+                                        name: String::new(),
+                                        arguments: String::new(),
+                                    },
+                                });
+                                entry.function.arguments.push_str(delta);
+                            }
+                        }
+                        "response.function_call_arguments.done" | "response.output_item.done" => {
+                            maybe_store_tool_call(
+                                &mut tool_calls,
+                                event["output_index"].as_u64(),
+                                &event["item"],
+                            );
+
                             let item_type = event["item"]["type"].as_str().unwrap_or("");
                             crate::dbg_log!("codex output_item.done type={item_type}");
                             if item_type == "web_search_call" {
@@ -207,10 +223,10 @@ impl Provider for CodexProvider {
                                 });
                             }
                         }
+                        // Web search done OR message done
                         "response.web_search_call.completed"
                         | "response.created"
                         | "response.in_progress"
-                        | "response.output_item.added"
                         | "response.content_part.added"
                         | "response.content_part.done"
                         | "response.output_text.done"
@@ -219,40 +235,20 @@ impl Provider for CodexProvider {
                         | "response.reasoning_summary_part.done"
                         | "response.reasoning_summary.part.added"
                         | "response.reasoning_summary.part.done"
-                        | "response.reasoning_text.done"
-                        | "response.function_call_arguments.delta"
-                        | "response.function_call_arguments.done" => {}
+                        | "response.reasoning_text.done" => {}
                         "response.completed" => {
+                            saw_completed = true;
                             // Extract tool calls and web search results from output
                             if let Some(output) = event["response"]["output"].as_array() {
-                                for item in output {
-                                    match item["type"].as_str().unwrap_or("") {
-                                        "function_call" => {
-                                            tool_calls.push(ToolCall {
-                                                id: item["call_id"]
-                                                    .as_str()
-                                                    .unwrap_or("")
-                                                    .to_owned(),
-                                                r#type: "function".into(),
-                                                function: ToolCallFunction {
-                                                    name: item["name"]
-                                                        .as_str()
-                                                        .unwrap_or("")
-                                                        .to_owned(),
-                                                    arguments: item["arguments"]
-                                                        .as_str()
-                                                        .unwrap_or("{}")
-                                                        .to_owned(),
-                                                },
-                                            });
-                                        }
-                                        "web_search_call" => {}
-                                        _ => {
-                                            crate::dbg_log!(
-                                                "codex unhandled event: {event_type} {}",
-                                                raw.chars().take(200).collect::<String>()
-                                            );
-                                        }
+                                for (idx, item) in output.iter().enumerate() {
+                                    maybe_store_tool_call(&mut tool_calls, Some(idx as u64), item);
+                                    if item["type"].as_str().unwrap_or("") != "function_call"
+                                        && item["type"].as_str().unwrap_or("") != "web_search_call"
+                                    {
+                                        crate::dbg_log!(
+                                            "codex unhandled event: {event_type} {}",
+                                            raw.chars().take(200).collect::<String>()
+                                        );
                                     }
                                 }
                             }
@@ -286,11 +282,53 @@ impl Provider for CodexProvider {
             }
 
             let mut msg = Message::assistant(text);
+            let tool_calls: Vec<_> = tool_calls
+                .into_values()
+                .filter(|tc| !tc.id.is_empty() && !tc.function.name.is_empty())
+                .collect();
+            if !saw_completed {
+                bail!("Codex SSE stream ended without response.completed");
+            }
             if !tool_calls.is_empty() {
                 msg.tool_calls = Some(tool_calls);
             }
             Ok((msg, usage))
         })
+    }
+}
+
+fn maybe_store_tool_call(
+    tool_calls: &mut BTreeMap<u64, ToolCall>,
+    output_index: Option<u64>,
+    item: &serde_json::Value,
+) {
+    if item["type"].as_str().unwrap_or("") != "function_call" {
+        return;
+    }
+    let Some(idx) = output_index else { return };
+    let entry = tool_calls.entry(idx).or_insert_with(|| ToolCall {
+        id: String::new(),
+        r#type: "function".into(),
+        function: ToolCallFunction {
+            name: String::new(),
+            arguments: String::new(),
+        },
+    });
+    if let Some(call_id) = item["call_id"].as_str()
+        && !call_id.is_empty()
+    {
+        entry.id = call_id.to_owned();
+    }
+    if let Some(name) = item["name"].as_str()
+        && !name.is_empty()
+    {
+        entry.function.name = name.to_owned();
+    }
+    if let Some(arguments) = item["arguments"].as_str()
+        && !arguments.is_empty()
+        && entry.function.arguments.is_empty()
+    {
+        entry.function.arguments = arguments.to_owned();
     }
 }
 
@@ -353,4 +391,48 @@ fn to_api_tools(tools: &[ToolSchema]) -> Vec<serde_json::Value> {
             })
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn stores_tool_call_from_incremental_codex_events() {
+        let mut tool_calls = BTreeMap::new();
+        let item = serde_json::json!({
+            "type": "function_call",
+            "call_id": "call_1",
+            "name": "exec_command",
+            "arguments": ""
+        });
+
+        maybe_store_tool_call(&mut tool_calls, Some(0), &item);
+        let entry = tool_calls.get_mut(&0).unwrap();
+        entry.function.arguments.push_str("{\"command\":\"git status\"}");
+
+        assert_eq!(entry.id, "call_1");
+        assert_eq!(entry.function.name, "exec_command");
+        assert_eq!(entry.function.arguments, "{\"command\":\"git status\"}");
+    }
+
+    #[test]
+    fn completed_snapshot_fills_missing_codex_tool_fields() {
+        let mut tool_calls = BTreeMap::new();
+        let partial = serde_json::json!({"type": "function_call", "name": "exec_command"});
+        let done = serde_json::json!({
+            "type": "function_call",
+            "call_id": "call_2",
+            "name": "exec_command",
+            "arguments": "{\"command\":\"pwd\"}"
+        });
+
+        maybe_store_tool_call(&mut tool_calls, Some(1), &partial);
+        maybe_store_tool_call(&mut tool_calls, Some(1), &done);
+
+        let entry = tool_calls.get(&1).unwrap();
+        assert_eq!(entry.id, "call_2");
+        assert_eq!(entry.function.arguments, "{\"command\":\"pwd\"}");
+    }
+
 }

@@ -96,10 +96,12 @@ impl Provider for OpenAIProvider {
 
             let tx_ref = &tx;
             let usage_ref = &mut usage;
-            post_sse(
+            let outcome = post_sse(
+                "openai",
                 &format!("{}/chat/completions", self.base_url),
                 &headers,
                 &body,
+                &tx,
                 &cancel,
                 |event: SseEvent| {
                     let delta = &event.data["choices"][0]["delta"];
@@ -161,6 +163,10 @@ impl Provider for OpenAIProvider {
                 },
             )
             .await?;
+
+            if !outcome.saw_done {
+                anyhow::bail!("OpenAI SSE stream ended without [DONE]");
+            }
 
             let tool_calls: Vec<ToolCall> = tool_map
                 .into_values()

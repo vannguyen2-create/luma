@@ -1,6 +1,6 @@
 # Roadmap
 
-Current: ~12K lines Rust, 290 tests, 3 providers, 9 tools. Cross-platform (macOS, Linux, Windows).
+Current: ~12K lines Rust, 290 tests, 3 providers, 12 tools. Cross-platform (macOS, Linux, Windows).
 
 ## v0.2 — Done
 
@@ -27,16 +27,26 @@ Current: ~12K lines Rust, 290 tests, 3 providers, 9 tools. Cross-platform (macOS
 - [x] **Cross-platform** — Windows install (`install.ps1`), Git Bash support, CI paths-ignore for docs
 - [x] **@file mention** — fuzzy autocomplete, file content injection, `@path` highlighting
 - [x] **Image attach** — clipboard paste, drag-drop, multimodal provider serialization
+- [x] **GitHub tools** — `GhFile`, `GhLs`, `GhSearch` for remote repository browsing
+- [x] **WebFetch** — fetch and extract page content with relevance ranking
+- [x] **Web search polish** — improved client fallback and structured result display
+- [x] **Completion polish** — Tab fills dropdown item without immediately accepting
+- [x] **Session resume polish** — hide `/resume` when already in-thread, fix blank resume screen
+- [x] **UTF-8 streaming fixes** — robust SSE chunk handling and safer highlighter boundaries
+- [x] **ContentBlock serialization fix** — pasted blocks serialized correctly to provider APIs
+- [x] **Install/update polish** — PATH handling and platform-aware self-update
 - [x] Legacy cleanup — removed custom deserializer, OutputLog, viewport, composite_overlay
 
 ## v0.4 — Performance & Polish
 
 - [ ] Diff algorithm: Myers O(n+m) replacing LCS O(n*m)
-- [ ] Diff line count in tool output ("Updated file.rs +5 -3")
-- [ ] URL highlighting in markdown (bare https:// links)
-- [ ] Terminal resize during streaming — verify no corruption
-- [ ] Streaming freeze profiling for large sessions (65K+ tokens)
-- [ ] Session management: `/delete`, `/rename`, `/export`
+- [ ] Diff stats in tool output ("Updated file.rs +5 -3")
+- [ ] Bare URL highlighting in markdown
+- [ ] Streaming resize stability across providers
+- [ ] Large-session profiling (65K+ tokens) — render throughput, memory, freeze points
+- [ ] Tool output polish — clearer summaries and more consistent formatting
+- [ ] Provider error surfacing — clearer transient/network failure messages in TUI
+- [ ] Rate limit UX — surface provider `429` errors clearly in TUI with actionable guidance
 
 ## v0.5 — UX & Extensibility
 

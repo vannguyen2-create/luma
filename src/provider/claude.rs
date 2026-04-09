@@ -157,13 +157,16 @@ impl Provider for ClaudeProvider {
             let mut server_tool_json = String::new();
             let mut in_server_tool = false;
             let mut usage = Usage::default();
+            let mut saw_message_stop = false;
 
             let tx_ref = &tx;
             let usage_ref = &mut usage;
             post_sse(
+                "claude",
                 &format!("{}/v1/messages", self.base_url),
                 &headers,
                 &body,
+                &tx,
                 &cancel,
                 |event: SseEvent| {
                     let data = &event.data;
@@ -306,9 +309,17 @@ impl Provider for ClaudeProvider {
                             cache_write: None,
                         }));
                     }
+
+                    if data["type"] == "message_stop" {
+                        saw_message_stop = true;
+                    }
                 },
             )
             .await?;
+
+            if !saw_message_stop {
+                anyhow::bail!("Claude SSE stream ended without message_stop");
+            }
 
             let mut msg = Message::assistant(text);
             if !tool_calls.is_empty() {

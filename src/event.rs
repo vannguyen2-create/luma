@@ -46,6 +46,12 @@ pub enum Event {
     },
     SkillStart(String),
     SkillEnd(String),
+    ProviderRetry {
+        provider: String,
+        delay_secs: u64,
+        attempt: u8,
+        max_attempts: u8,
+    },
     Usage(Usage),
     AgentDone,
     AgentError(String),

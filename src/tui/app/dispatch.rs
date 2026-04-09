@@ -140,6 +140,16 @@ impl super::App {
                 self.doc.skill_end(&summary);
                 Action::Render
             }
+            Event::ProviderRetry {
+                provider,
+                delay_secs,
+                attempt,
+                max_attempts,
+            } => {
+                self.doc
+                    .provider_retry(&provider, delay_secs, attempt, max_attempts);
+                Action::Render
+            }
             Event::Usage(usage) => {
                 // Only update cache display when values are present (message_start).
                 // message_delta sends None to avoid overwriting.

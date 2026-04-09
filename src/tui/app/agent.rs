@@ -187,10 +187,37 @@ impl super::App {
         if msg.contains("Aborted") {
             self.doc.warn("aborted");
         } else {
-            self.doc.error(msg);
+            self.doc.error(&format_provider_error(msg));
         }
         self.on_agent_done();
     }
+}
+
+fn format_provider_error(msg: &str) -> String {
+    let lower = msg.to_ascii_lowercase();
+    if lower.contains("hard quota exceeded") {
+        return msg.to_owned();
+    }
+    if lower.contains("temporary throttling") {
+        return msg.to_owned();
+    }
+    if is_rate_limit_error(msg) {
+        if msg.to_ascii_lowercase().contains("switch model/provider") {
+            return msg.to_owned();
+        }
+        return format!(
+            "provider rate limit hit (429)\n\n{}\n\nTry again in a bit, reduce request frequency, or switch model/provider.",
+            msg.trim()
+        );
+    }
+    msg.to_owned()
+}
+
+fn is_rate_limit_error(msg: &str) -> bool {
+    let lower = msg.to_ascii_lowercase();
+    lower.contains("429")
+        || lower.contains("rate limit")
+        || lower.contains("too many requests")
 }
 
 #[cfg(target_os = "macos")]
@@ -363,5 +390,31 @@ mod tests {
     #[test]
     fn email_not_treated_as_file_ref() {
         assert!(parse_file_refs("email user@example.com please").is_empty());
+    }
+
+    #[test]
+    fn formats_rate_limit_error_for_tui() {
+        let formatted = format_provider_error("429 Too Many Requests: quota exceeded");
+        assert!(formatted.contains("provider rate limit hit (429)"));
+        assert!(formatted.contains("Try again in a bit"));
+        assert!(formatted.contains("switch model/provider"));
+    }
+
+    #[test]
+    fn leaves_non_rate_limit_error_unchanged() {
+        let msg = "500 Internal Server Error";
+        assert_eq!(format_provider_error(msg), msg);
+    }
+
+    #[test]
+    fn preserves_provider_hard_quota_message() {
+        let msg = "claude hard quota exceeded (429): quota exceeded. Quota/billing must recover before retrying; try another model/provider if needed.";
+        assert_eq!(format_provider_error(msg), msg);
+    }
+
+    #[test]
+    fn preserves_provider_temporary_throttling_message() {
+        let msg = "claude temporary throttling (429): too many requests. Wait a bit, reduce request frequency, or switch model/provider.";
+        assert_eq!(format_provider_error(msg), msg);
     }
 }

@@ -1,5 +1,7 @@
 /// SSE (Server-Sent Events) streaming parser for LLM APIs.
+use crate::event::Event;
 use anyhow::{Result, bail};
+use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
 /// A parsed SSE event with type and JSON data.
@@ -9,43 +11,36 @@ pub struct SseEvent {
     pub data: serde_json::Value,
 }
 
+/// SSE stream completion metadata.
+pub struct SseOutcome {
+    pub saw_done: bool,
+}
+
 /// Build and send an SSE POST request, then stream events via callback.
 pub async fn post_sse(
+    provider: &str,
     url: &str,
     headers: &[(&str, &str)],
     body: &serde_json::Value,
+    tx: &mpsc::Sender<Event>,
     cancel: &CancellationToken,
     mut on_event: impl FnMut(SseEvent),
-) -> Result<()> {
+) -> Result<SseOutcome> {
     let client = reqwest::Client::builder()
         .connect_timeout(std::time::Duration::from_secs(30))
         .build()?;
-    let mut req = client
-        .post(url)
-        .header("Content-Type", "application/json")
-        .json(body);
+    let response = crate::provider::retry::send_with_retry(provider, tx, cancel, || {
+        let mut req = client
+            .post(url)
+            .header("Content-Type", "application/json")
+            .json(body);
 
-    for (k, v) in headers {
-        req = req.header(*k, *v);
-    }
-
-    let response = req.send().await?;
-
-    if !response.status().is_success() {
-        let status = response.status();
-        let body = response.text().await.unwrap_or_default();
-        let msg = serde_json::from_str::<serde_json::Value>(&body)
-            .ok()
-            .and_then(|v| {
-                v["error"]["message"]
-                    .as_str()
-                    .or_else(|| v["message"].as_str())
-                    .or_else(|| v["error"].as_str())
-                    .map(|s| s.to_owned())
-            })
-            .unwrap_or_else(|| body[..body.len().min(200)].to_owned());
-        bail!("{status}: {msg}");
-    }
+        for (k, v) in headers {
+            req = req.header(*k, *v);
+        }
+        req.send()
+    })
+    .await?;
 
     let mut raw_buf: Vec<u8> = Vec::new();
     let mut current_event = String::new();
@@ -53,6 +48,7 @@ pub async fn post_sse(
     // Timeout between chunks — if server stops sending data for 120s, bail.
     let chunk_timeout = std::time::Duration::from_secs(120);
 
+    let mut saw_done = false;
     loop {
         let chunk = tokio::select! {
             c = response.chunk() => c?,
@@ -78,6 +74,7 @@ pub async fn post_sse(
             } else if let Some(rest) = line.strip_prefix("data:") {
                 let raw = rest.trim();
                 if raw == "[DONE]" {
+                    saw_done = true;
                     continue;
                 }
                 if let Ok(data) = serde_json::from_str::<serde_json::Value>(raw) {
@@ -100,7 +97,7 @@ pub async fn post_sse(
         }
     }
 
-    Ok(())
+    Ok(SseOutcome { saw_done })
 }
 
 #[cfg(test)]
